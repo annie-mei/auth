@@ -11,3 +11,4 @@ anyhow = "1.0.66"
 rocket = { version = "0.5.0-rc.2", features = ["json"] }
 shuttle-secrets = "0.10.0"
 shuttle-service = { version = "0.10.0", features = ["web-rocket"] }
+url = "2.3.1"
