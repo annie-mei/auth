@@ -17,3 +17,4 @@ Cargo.lock
 
 # Shuttle
 Secrets.toml
+Secrets.dev.toml
