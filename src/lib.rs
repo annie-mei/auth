@@ -52,6 +52,7 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
 
     #[derive(Debug, Deserialize)]
     #[serde(crate = "rocket::serde")]
+    #[allow(dead_code)]
     struct TokenResponse {
         token_type: String,
         expires_in: i32,
