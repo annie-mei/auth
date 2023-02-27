@@ -19,11 +19,6 @@ async fn secret(state: &State<MyState>) -> Result<String, BadRequest<String>> {
 
 #[get("/login")]
 async fn login(state: &State<MyState>) -> Redirect {
-    // https://anilist.co/api/v2/oauth/authorize?
-    // client_id' => '{client_id}',
-    // 'redirect_uri' => '{redirect_uri}', // http://example.com/callback
-    // 'response_type' => 'code'
-
     const ANILIST_BASE: &str = "https://anilist.co/api/v2/oauth/authorize";
     let params = [
         ("client_id", state.client_id.as_str()),
@@ -37,19 +32,6 @@ async fn login(state: &State<MyState>) -> Redirect {
 
 #[get("/authorized?<code>")]
 async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadRequest<String>> {
-    //     $response = $http->post('https://anilist.co/api/v2/oauth/token', [
-    //     'form_params' => [
-    //         'grant_type' => 'authorization_code',
-    //         'client_id' => '{client_id}',
-    //         'client_secret' => '{client_secret}',
-    //         'redirect_uri' => '{redirect_uri}', // http://example.com/callback
-    //         'code' => '{code}', // The Authorization code received previously
-    //     ],
-    //     'headers' => [
-    //         'Accept' => 'application/json'
-    //     ]
-    // ]);
-
     #[derive(Debug, Deserialize)]
     #[serde(crate = "rocket::serde")]
     #[allow(dead_code)]
@@ -77,6 +59,8 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
         .await
         .map_err(|e| BadRequest(Some(e.to_string())))?;
 
+    // If the response fails to parse, return an error.
+    // We want the user to try again.
     let body = response
         .json::<TokenResponse>()
         .await
