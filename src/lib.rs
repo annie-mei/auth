@@ -61,12 +61,12 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
 
     // If the response fails to parse, return an error.
     // We want the user to try again.
-    let body = response
+    response
         .json::<TokenResponse>()
         .await
         .map_err(|e| BadRequest(Some(e.to_string())))?;
 
-    Ok(format!("{:#?}", body))
+    Ok("success".to_string())
 }
 
 struct MyState {
