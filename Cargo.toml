@@ -7,7 +7,7 @@ publish = false
 [lib]
 
 [dependencies]
-anyhow = "1.0.66"
+anyhow = "1.0.69"
 reqwest = { version = "0.11.14", features = ["json"] }
 rocket = { version = "0.5.0-rc.2", features = ["json", "tls"] }
 shuttle-secrets = "0.10.0"
