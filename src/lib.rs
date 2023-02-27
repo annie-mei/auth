@@ -22,7 +22,7 @@ async fn login(state: &State<MyState>) -> Redirect {
     const ANILIST_BASE: &str = "https://anilist.co/api/v2/oauth/authorize";
     let params = [
         ("client_id", state.client_id.as_str()),
-        ("redirect_uri", "http://127.0.0.1:8000/authorized"),
+        ("redirect_uri", state.redirect_uri.as_str()),
         ("response_type", "code"),
     ];
     let url = Url::parse_with_params(ANILIST_BASE, &params).unwrap();
@@ -47,7 +47,8 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
         ("grant_type", "authorization_code"),
         ("client_id", state.client_id.as_str()),
         ("client_secret", state.client_secret.as_str()),
-        ("redirect_uri", "http://127.0.0.1:8000/authorized"),
+        ("redirect_uri", state.redirect_uri.as_str()),
+        ("code", code.as_str()),
         ("code", code.as_str()),
     ]);
 
@@ -72,6 +73,7 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
 struct MyState {
     client_id: String,
     client_secret: String,
+    redirect_uri: String,
     client: reqwest::Client,
 }
 
@@ -92,9 +94,16 @@ async fn rocket(
         return Err(anyhow!("Anilist Secret was not found").into());
     };
 
+    let redirect_uri = if let Some(redirect_uri) = secret_store.get("REDIRECT_URL") {
+        redirect_uri
+    } else {
+        return Err(anyhow!("Anilist Redirect URL was not found").into());
+    };
+
     let state = MyState {
         client_id,
         client_secret,
+        redirect_uri,
         client: reqwest::Client::new(),
     };
     let rocket = rocket::build()
