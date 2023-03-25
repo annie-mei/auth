@@ -77,10 +77,10 @@ struct MyState {
     client: reqwest::Client,
 }
 
-#[shuttle_service::main]
+#[shuttle_runtime::main]
 async fn rocket(
     #[shuttle_secrets::Secrets] secret_store: SecretStore,
-) -> shuttle_service::ShuttleRocket {
+) -> shuttle_rocket::ShuttleRocket {
     // get secret defined in `Secrets.toml` file.
     let client_id = if let Some(client_id) = secret_store.get("ANILIST_CLIENT_ID") {
         client_id
@@ -110,5 +110,5 @@ async fn rocket(
         .mount("/", routes![secret, login, authorized])
         .manage(state);
 
-    Ok(rocket)
+    Ok(rocket.into())
 }

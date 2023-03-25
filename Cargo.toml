@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[lib]
-
 [dependencies]
 anyhow = "1.0.69"
 reqwest = { version = "0.11.14", features = ["json"] }
 rocket = { version = "0.5.0-rc.2", features = ["json", "tls"] }
-shuttle-secrets = "0.11.0"
-shuttle-service = { version = "0.11.0", features = ["web-rocket"] }
+shuttle-rocket = { version = "0.12.0" }
+shuttle-runtime = { version = "0.12.0" }
+shuttle-secrets = "0.12.0"
+tokio = { version = "1.26.0" }
 url = "2.3.1"
