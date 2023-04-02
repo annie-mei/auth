@@ -4,6 +4,7 @@ extern crate rocket;
 use std::collections::HashMap;
 
 use anyhow::anyhow;
+use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use rocket::{
     log::private::info,
     response::{status::BadRequest, Redirect},
@@ -91,14 +92,18 @@ async fn fetch_viewer_id(
         }
     }
     ";
-
     const ANILIST_USER_BASE: &str = "https://graphql.anilist.co";
+
     let authorization_param = format!("Bearer {}", access_token);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(AUTHORIZATION, authorization_param.parse().unwrap());
+    headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+    headers.insert(ACCEPT, "application/json".parse().unwrap());
+
     let viewer_response = client
         .post(ANILIST_USER_BASE)
-        .header("Authorization", authorization_param.as_str())
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json")
+        .headers(headers)
         .body(json!({ "query": USER_QUERY }).to_string())
         .send()
         .await
