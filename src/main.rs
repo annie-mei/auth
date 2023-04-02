@@ -12,11 +12,6 @@ use rocket::{
 use shuttle_secrets::SecretStore;
 use url::Url;
 
-#[get("/secret")]
-async fn secret(state: &State<MyState>) -> Result<String, BadRequest<String>> {
-    Ok(state.client_id.clone())
-}
-
 #[get("/login")]
 async fn login(state: &State<MyState>) -> Redirect {
     const ANILIST_BASE: &str = "https://anilist.co/api/v2/oauth/authorize";
@@ -107,7 +102,7 @@ async fn rocket(
         client: reqwest::Client::new(),
     };
     let rocket = rocket::build()
-        .mount("/", routes![secret, login, authorized])
+        .mount("/", routes![login, authorized])
         .manage(state);
 
     Ok(rocket.into())
