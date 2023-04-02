@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use anyhow::anyhow;
 use rocket::{
     response::{status::BadRequest, Redirect},
-    serde::Deserialize,
     State,
 };
+use serde::Deserialize;
 use shuttle_secrets::SecretStore;
 use url::Url;
 
@@ -28,7 +28,6 @@ async fn login(state: &State<MyState>) -> Redirect {
 #[get("/authorized?<code>")]
 async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadRequest<String>> {
     #[derive(Debug, Deserialize)]
-    #[serde(crate = "rocket::serde")]
     #[allow(dead_code)]
     struct TokenResponse {
         token_type: String,
