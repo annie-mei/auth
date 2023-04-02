@@ -5,10 +5,12 @@ use std::collections::HashMap;
 
 use anyhow::anyhow;
 use rocket::{
+    log::private::info,
     response::{status::BadRequest, Redirect},
     State,
 };
 use serde::Deserialize;
+use serde_json::json;
 use shuttle_secrets::SecretStore;
 use url::Url;
 
@@ -56,12 +58,60 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
 
     // If the response fails to parse, return an error.
     // We want the user to try again.
-    response
+    let access_token = response
         .json::<TokenResponse>()
+        .await
+        .map_err(|e| BadRequest(Some(e.to_string())))?
+        .access_token;
+
+    info!("Fetching User data ...");
+
+    info!("User data fetched successfully! ...");
+
+    match fetch_viewer_id(state.client.clone(), access_token).await {
+        Ok(id) => {
+            info!("User ID: {:#?}", id);
+            Ok("success".to_string())
+        }
+        Err(e) => {
+            info!("Error: {:#?}", e);
+            Err(e)
+        }
+    }
+}
+
+async fn fetch_viewer_id(
+    client: reqwest::Client,
+    access_token: String,
+) -> Result<i64, BadRequest<String>> {
+    const USER_QUERY: &str = "
+    query {
+        Viewer {
+            id
+        }
+    }
+    ";
+
+    const ANILIST_USER_BASE: &str = "https://graphql.anilist.co";
+    let authorization_param = format!("Bearer {}", access_token);
+    let viewer_response = client
+        .post(ANILIST_USER_BASE)
+        .header("Authorization", authorization_param.as_str())
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .body(json!({ "query": USER_QUERY }).to_string())
+        .send()
         .await
         .map_err(|e| BadRequest(Some(e.to_string())))?;
 
-    Ok("success".to_string())
+    let viewer_response = viewer_response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| BadRequest(Some(e.to_string())))?;
+
+    viewer_response["data"]["Viewer"]["id"]
+        .as_i64()
+        .ok_or_else(|| BadRequest(Some("Failed to parse viewer id".to_string())))
 }
 
 struct MyState {
