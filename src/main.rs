@@ -130,7 +130,23 @@ struct MyState {
 async fn rocket(
     #[shuttle_secrets::Secrets] secret_store: SecretStore,
 ) -> shuttle_rocket::ShuttleRocket {
-    // get secret defined in `Secrets.toml` file.
+    let sentry_dsn = if let Some(client_id) = secret_store.get("SENTRY_DSN") {
+        client_id
+    } else {
+        return Err(anyhow!("Sentry DSN was not found").into());
+    };
+
+    let _guard = sentry::init((
+        sentry_dsn,
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            traces_sample_rate: 1.0,
+            enable_profiling: true,
+            profiles_sample_rate: 1.0,
+            ..Default::default()
+        },
+    ));
+
     let client_id = if let Some(client_id) = secret_store.get("ANILIST_CLIENT_ID") {
         client_id
     } else {
