@@ -46,7 +46,6 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
         ("client_secret", state.client_secret.as_str()),
         ("redirect_uri", state.redirect_uri.as_str()),
         ("code", code.as_str()),
-        ("code", code.as_str()),
     ]);
 
     let response = state
