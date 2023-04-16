@@ -10,10 +10,40 @@ use rocket::{
     response::{status::BadRequest, Redirect},
     State,
 };
+use rocket_db_pools::{sqlx, Connection, Database};
 use serde::Deserialize;
 use serde_json::json;
 use shuttle_secrets::SecretStore;
+use sqlx::Row;
 use url::Url;
+
+#[derive(Database)]
+#[database("annie-mei")]
+struct AnnieMei(sqlx::PgPool);
+
+#[get("/read/<anilist_id>")]
+async fn read(mut db: Connection<AnnieMei>, anilist_id: i64) -> String {
+    let rows = sqlx::query("SELECT * FROM users")
+        .bind(anilist_id)
+        .fetch_all(&mut *db)
+        .await
+        .ok();
+    let str_result = rows
+        .unwrap()
+        .iter()
+        .map(|r| {
+            format!(
+                "{} - {} - {}",
+                r.get::<i64, _>("discord_id"),
+                r.get::<i64, _>("anilist_id"),
+                r.get::<String, _>("anilist_username"),
+            )
+        })
+        .collect::<Vec<String>>()
+        .join(", ");
+    info!("Read: {:#?}", str_result);
+    "Success".to_string()
+}
 
 #[get("/login")]
 async fn login(state: &State<MyState>) -> Redirect {
@@ -171,7 +201,8 @@ async fn rocket(
         client: reqwest::Client::new(),
     };
     let rocket = rocket::build()
-        .mount("/", routes![login, authorized])
+        .attach(AnnieMei::init())
+        .mount("/", routes![login, authorized, read])
         .manage(state);
 
     Ok(rocket.into())

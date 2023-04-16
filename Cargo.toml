@@ -8,11 +8,13 @@ publish = false
 anyhow = "1.0.69"
 reqwest = { version = "0.11.14", features = ["json"] }
 rocket = { version = "0.5.0-rc.3", features = ["json", "tls"] }
+rocket_db_pools = { version = "0.1.0-rc.3", features = ["sqlx_postgres"] }
 sentry = { version = "0.30.0", features = ["profiling"] }
 serde = "1.0"
 serde_json = "1.0"
 shuttle-rocket = { version = "0.12.0" }
 shuttle-runtime = { version = "0.12.0" }
 shuttle-secrets = "0.12.0"
+sqlx = { version = "0.6.0", features = ["postgres", "offline", "json"] }
 tokio = { version = "1.26.0" }
 url = "2.3.1"
