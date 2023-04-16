@@ -1,5 +1,13 @@
 #[macro_use]
 extern crate rocket;
+pub mod utils;
+
+use crate::utils::{
+    consts::ANILIST_AUTH,
+    consts::ANILIST_TOKEN,
+    functions::{fetch_viewer_id, save_access_token},
+    structs::{AnnieMei, MyState, TokenResponse},
+};
 
 use std::collections::HashMap;
 
@@ -9,27 +17,18 @@ use rocket::{
     response::{status::BadRequest, Redirect},
     State,
 };
-use rocket_db_pools::{sqlx, Connection, Database};
-use serde::Deserialize;
+use rocket_db_pools::{Connection, Database};
 use shuttle_secrets::SecretStore;
 use url::Url;
 
-pub mod utils;
-use crate::utils::{fetch_viewer_id, save_access_token};
-
-#[derive(Database)]
-#[database("annie-mei")]
-pub struct AnnieMei(sqlx::PgPool);
-
 #[get("/login")]
 async fn login(state: &State<MyState>) -> Redirect {
-    const ANILIST_BASE: &str = "https://anilist.co/api/v2/oauth/authorize";
     let params = [
         ("client_id", state.client_id.as_str()),
         ("redirect_uri", state.redirect_uri.as_str()),
         ("response_type", "code"),
     ];
-    let url = Url::parse_with_params(ANILIST_BASE, &params).unwrap();
+    let url = Url::parse_with_params(ANILIST_AUTH, &params).unwrap();
 
     Redirect::to(url.to_string())
 }
@@ -40,16 +39,6 @@ async fn authorized(
     state: &State<MyState>,
     db: Connection<AnnieMei>,
 ) -> Result<String, BadRequest<String>> {
-    #[derive(Debug, Deserialize)]
-    #[allow(dead_code)]
-    struct TokenResponse {
-        token_type: String,
-        expires_in: i32,
-        access_token: String,
-        refresh_token: String,
-    }
-
-    const ANILIST_BASE: &str = "https://anilist.co/api/v2/oauth/token";
     let params = HashMap::from([
         ("grant_type", "authorization_code"),
         ("client_id", state.client_id.as_str()),
@@ -60,7 +49,7 @@ async fn authorized(
 
     let response = state
         .client
-        .post(ANILIST_BASE)
+        .post(ANILIST_TOKEN)
         .json(&params)
         .send()
         .await
@@ -98,13 +87,6 @@ async fn authorized(
             Err(BadRequest(Some(message)))
         }
     }
-}
-
-struct MyState {
-    client_id: String,
-    client_secret: String,
-    redirect_uri: String,
-    client: reqwest::Client,
 }
 
 #[shuttle_runtime::main]

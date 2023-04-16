@@ -1,4 +1,4 @@
-use crate::AnnieMei;
+use crate::{utils::consts::ANILIST_USER_BASE, AnnieMei};
 use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use rocket::response::status::BadRequest;
 use rocket_db_pools::Connection;
@@ -15,7 +15,6 @@ pub async fn fetch_viewer_id(
         }
     }
     ";
-    const ANILIST_USER_BASE: &str = "https://graphql.anilist.co";
 
     let authorization_param = format!("Bearer {}", access_token);
 
