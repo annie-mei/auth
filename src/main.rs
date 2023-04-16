@@ -34,7 +34,11 @@ async fn login(state: &State<MyState>) -> Redirect {
 }
 
 #[get("/authorized?<code>")]
-async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadRequest<String>> {
+async fn authorized(
+    code: String,
+    state: &State<MyState>,
+    db: Connection<AnnieMei>,
+) -> Result<String, BadRequest<String>> {
     #[derive(Debug, Deserialize)]
     #[allow(dead_code)]
     struct TokenResponse {
@@ -73,14 +77,24 @@ async fn authorized(code: String, state: &State<MyState>) -> Result<String, BadR
 
     info!("User data fetched successfully! ...");
 
-    match fetch_viewer_id(state.client.clone(), access_token).await {
+    match fetch_viewer_id(state.client.clone(), access_token.clone()).await {
         Ok(id) => {
             info!("User ID: {:#?}", id);
-            Ok("success".to_string())
+            let response = save_access_token(access_token, id, db).await;
+            match response {
+                Ok(_) => info!("Saved access token"),
+                Err(e) => {
+                    let message = format!("Failed to save access token: {:#?}", e);
+                    info!("Error: {:#?}", message);
+                    return Err(BadRequest(Some(message)));
+                }
+            }
+            Ok("Success".to_string())
         }
         Err(e) => {
-            info!("Error: {:#?}", e);
-            Err(e)
+            let message = format!("Failed to fetch viewer ID: {:#?}", e);
+            info!("Error: {:#?}", message);
+            Err(BadRequest(Some(message)))
         }
     }
 }
@@ -121,6 +135,19 @@ async fn fetch_viewer_id(
     viewer_response["data"]["Viewer"]["id"]
         .as_i64()
         .ok_or_else(|| BadRequest(Some("Failed to parse viewer id".to_string())))
+}
+
+async fn save_access_token(
+    access_token: String,
+    anilist_id: i64,
+    mut db: Connection<AnnieMei>,
+) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
+    info!("Saving access token ...");
+    sqlx::query("UPDATE users SET access_token=$1 WHERE anilist_id=$2")
+        .bind(access_token)
+        .bind(anilist_id)
+        .execute(&mut *db)
+        .await
 }
 
 struct MyState {
