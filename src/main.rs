@@ -15,8 +15,7 @@ use shuttle_secrets::SecretStore;
 use url::Url;
 
 pub mod utils;
-use crate::utils::fetch_viewer_id;
-use crate::utils::save_access_token;
+use crate::utils::{fetch_viewer_id, save_access_token};
 
 #[derive(Database)]
 #[database("annie-mei")]
