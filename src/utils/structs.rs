@@ -20,3 +20,11 @@ pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
 }
+
+pub struct StateToken<'r>(pub &'r str);
+
+#[derive(Debug)]
+pub enum StateTokenError {
+    Missing,
+    Invalid,
+}

@@ -1,6 +1,8 @@
 use crate::{utils::consts::ANILIST_USER_BASE, AnnieMei};
+
+use nanoid::nanoid;
 use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
-use rocket::response::status::BadRequest;
+use rocket::{http::CookieJar, response::status::BadRequest};
 use rocket_db_pools::Connection;
 use serde_json::json;
 
@@ -52,4 +54,27 @@ pub async fn save_access_token(
         .bind(anilist_id)
         .execute(&mut *db)
         .await
+}
+
+pub fn get_state_token() -> String {
+    nanoid!(32)
+}
+
+pub fn is_valid_state_token(jar: &CookieJar, state: &str) -> bool {
+    let state_cookie = jar.get_private("state").or_else(|| {
+        info!("State cookie not found from get_private");
+        info!("Jar: {:#?}", jar);
+        jar.get_pending("state")
+    });
+
+    if let Some(state_cookie) = state_cookie {
+        if state_cookie.value() == state {
+            return true;
+        } else {
+            info!("State token mismatch");
+        }
+    } else {
+        info!("State cookie not found");
+    }
+    false
 }

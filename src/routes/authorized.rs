@@ -1,7 +1,7 @@
 use crate::utils::{
     consts::ANILIST_TOKEN,
     functions::{fetch_viewer_id, save_access_token},
-    structs::{AnnieMei, MyState, TokenResponse},
+    structs::{AnnieMei, MyState, StateToken, TokenResponse},
 };
 use std::collections::HashMap;
 
@@ -11,9 +11,12 @@ use rocket_db_pools::Connection;
 #[get("/authorized?<code>")]
 pub async fn authorized(
     code: String,
+    _state_token: StateToken<'_>,
     state: &State<MyState>,
     db: Connection<AnnieMei>,
 ) -> Result<String, BadRequest<String>> {
+    info!("Checking state token ...");
+
     let params = HashMap::from([
         ("grant_type", "authorization_code"),
         ("client_id", state.client_id.as_str()),
