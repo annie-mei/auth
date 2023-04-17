@@ -1,2 +1,7 @@
-[default.databases.annie-mei]
+[debug.databases.annie-mei]
+url = "<local_db_url>"
+
+
+[release.databases.annie-mei]
 url = "<db_url>"
+secret = "<secret for signing>"
