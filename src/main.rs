@@ -5,12 +5,12 @@ pub mod utils;
 
 use crate::{
     routes::{authorized::authorized, login::login},
-    utils::structs::{AnnieMei, MyState},
+    utils::structs::MyState,
 };
 
 use anyhow::anyhow;
-use rocket_db_pools::Database;
 use shuttle_secrets::SecretStore;
+use sqlx::postgres::PgPoolOptions;
 
 #[shuttle_runtime::main]
 async fn rocket(
@@ -51,14 +51,35 @@ async fn rocket(
         return Err(anyhow!("Anilist Redirect URL was not found").into());
     };
 
+    let database_url = if let Some(database_url) = secret_store.get("DATABASE_URL") {
+        database_url
+    } else {
+        return Err(anyhow!("Database URL was not found").into());
+    };
+
+    let secret_key = if let Some(secret_key) = secret_store.get("SECRET_KEY") {
+        secret_key
+    } else {
+        return Err(anyhow!("Secret Key was not found").into());
+    };
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .map_err(|e| anyhow!("Failed to connect to database: {}", e))?;
+
     let state = MyState {
         client_id,
         client_secret,
         redirect_uri,
         client: reqwest::Client::new(),
+        pool,
     };
-    let rocket = rocket::build()
-        .attach(AnnieMei::init())
+
+    let figment = rocket::Config::figment().merge(("secret_key", secret_key));
+
+    let rocket = rocket::custom(figment)
         .mount("/", routes![login, authorized])
         .manage(state);
 

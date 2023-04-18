@@ -1,19 +1,17 @@
 use crate::utils::{
     consts::ANILIST_TOKEN,
     functions::{fetch_viewer_id, save_access_token},
-    structs::{AnnieMei, MyState, StateToken, TokenResponse},
+    structs::{MyState, StateToken, TokenResponse},
 };
 use std::collections::HashMap;
 
 use rocket::{log::private::info, response::status::BadRequest, State};
-use rocket_db_pools::Connection;
 
 #[get("/authorized?<code>")]
 pub async fn authorized(
     code: String,
     _state_token: StateToken<'_>,
     state: &State<MyState>,
-    db: Connection<AnnieMei>,
 ) -> Result<String, BadRequest<String>> {
     info!("Checking state token ...");
 
@@ -48,7 +46,7 @@ pub async fn authorized(
     match fetch_viewer_id(state.client.clone(), access_token.clone()).await {
         Ok(id) => {
             info!("User ID: {:#?}", id);
-            let response = save_access_token(access_token, id, db).await;
+            let response = save_access_token(access_token, id, &state.pool).await;
             match response {
                 Ok(_) => info!("Saved access token"),
                 Err(e) => {

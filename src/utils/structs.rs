@@ -1,15 +1,13 @@
-use rocket_db_pools::{sqlx, Database};
+use rocket_db_pools::sqlx;
 use serde::Deserialize;
-
-#[derive(Database)]
-#[database("annie-mei")]
-pub struct AnnieMei(sqlx::PgPool);
+use sqlx::PgPool;
 
 pub struct MyState {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
     pub client: reqwest::Client,
+    pub pool: PgPool,
 }
 
 #[derive(Debug, Deserialize)]

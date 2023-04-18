@@ -1,10 +1,10 @@
-use crate::{utils::consts::ANILIST_USER_BASE, AnnieMei};
+use crate::utils::consts::ANILIST_USER_BASE;
 
 use nanoid::nanoid;
 use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use rocket::{http::CookieJar, response::status::BadRequest};
-use rocket_db_pools::Connection;
 use serde_json::json;
+use sqlx::{Pool, Postgres};
 
 pub async fn fetch_viewer_id(
     client: reqwest::Client,
@@ -46,13 +46,13 @@ pub async fn fetch_viewer_id(
 pub async fn save_access_token(
     access_token: String,
     anilist_id: i64,
-    mut db: Connection<AnnieMei>,
+    db: &Pool<Postgres>,
 ) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
     info!("Saving access token ...");
     sqlx::query("UPDATE users SET access_token=$1 WHERE anilist_id=$2")
         .bind(access_token)
         .bind(anilist_id)
-        .execute(&mut *db)
+        .execute(db)
         .await
 }
 
