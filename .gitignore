@@ -14,3 +14,10 @@ Cargo.lock
 
 /target
 /Cargo.lock
+
+# Shuttle
+Secrets.toml
+Secrets.dev.toml
+
+# Rocket Config
+Rocket.toml
