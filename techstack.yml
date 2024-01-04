@@ -1,7 +1,8 @@
 repo_name: annie-mei/auth
 report_id: f88c343dc9e4f8b62d8820581d9c54bf
+version: 0.1
 repo_type: Public
-timestamp: '2023-11-09T15:21:04+00:00'
+timestamp: '2024-01-04T14:59:08+00:00'
 requested_by: InfernapeXavier
 provider: github
 branch: current
@@ -15,6 +16,7 @@ tools:
   category: Languages & Frameworks
   sub_category: Languages
   image_url: https://img.stackshare.io/service/1070/v7txhrjp9pdqrkdtxxp0.png
+  detection_source_url: https://github.com/annie-mei/auth
   detection_source: Repo Metadata
 - name: Git
   description: Fast, scalable, distributed revision control system
@@ -24,4 +26,5 @@ tools:
   category: Build, Test, Deploy
   sub_category: Version Control System
   image_url: https://img.stackshare.io/service/1046/git.png
+  detection_source_url: https://github.com/annie-mei/auth
   detection_source: Repo Metadata
