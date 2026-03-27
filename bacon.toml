@@ -1,0 +1,87 @@
+#:schema https://dystroy.org/bacon/.bacon.schema.json
+
+# This is a configuration file for the bacon tool.
+#
+# Complete help on configuration: https://dystroy.org/bacon/config/
+#
+# Modeled after the sibling annie-mei bot repo, but with `check` as the
+# default job so Bacon is useful before local auth secrets are configured.
+
+default_job = "check"
+env.CARGO_TERM_COLOR = "always"
+
+[jobs.check]
+command = ["cargo", "check"]
+need_stdout = false
+
+[jobs.check-all]
+command = ["cargo", "check", "--all-targets"]
+need_stdout = false
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--all-features", "--", "-D", "warnings"]
+need_stdout = false
+
+[jobs.clippy-all]
+command = [
+    "cargo",
+    "clippy",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings",
+]
+need_stdout = false
+
+[jobs.pedantic]
+command = [
+    "cargo",
+    "clippy",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-W",
+    "clippy::pedantic",
+]
+need_stdout = false
+
+[jobs.test]
+command = ["cargo", "test"]
+need_stdout = true
+
+[jobs.doc]
+command = ["cargo", "doc", "--no-deps"]
+need_stdout = false
+
+[jobs.doc-open]
+command = ["cargo", "doc", "--no-deps", "--open"]
+need_stdout = false
+on_success = "back"
+
+[jobs.run]
+command = ["cargo", "run"]
+need_stdout = true
+allow_warnings = true
+background = true
+
+[jobs.run-long]
+command = ["cargo", "run"]
+need_stdout = true
+allow_warnings = true
+background = false
+on_change_strategy = "kill_then_restart"
+
+# Dev job for the auth server - runs the service and restarts on code changes.
+[jobs.dev]
+command = ["cargo", "run"]
+need_stdout = true
+allow_warnings = true
+background = false
+on_change_strategy = "kill_then_restart"
+
+[keybindings]
+c = "job:clippy-all"
+p = "job:pedantic"
+d = "job:dev"
+r = "job:run-long"
