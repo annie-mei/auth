@@ -21,3 +21,8 @@ Secrets.dev.toml
 
 # Rocket Config
 Rocket.toml
+
+# Agents
+opencode.json*
+slate.json*
+.factory/settings.json
