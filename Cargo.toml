@@ -2,7 +2,17 @@
 name = "auth"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 publish = false
+
+[profile.dev]
+split-debuginfo = "unpacked"
+
+[profile.release]
+lto = true
+codegen-units = 1
+debug = 2
+split-debuginfo = "packed"
 
 [dependencies]
 anyhow = "1.0.100"
