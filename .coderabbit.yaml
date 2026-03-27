@@ -1,0 +1,60 @@
+language: "en-US"
+early_access: true
+
+tone_instructions: >
+  Review as a pragmatic Rust teammate. Prioritize correctness, operational safety,
+  secret handling, and maintainability. Be concise, specific, and action-oriented.
+  Focus on meaningful issues rather than style nits that rustfmt or clippy already handle.
+
+reviews:
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  poem: false
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_instructions:
+    - path: "src/**/*.rs"
+      instructions: |
+        This is a Rust Rocket auth server for Annie Mei that handles AniList OAuth,
+        stores access tokens in Postgres via `sqlx`, and reports issues to Sentry.
+
+        Prioritize these checks:
+        - Prefer `?` and explicit error handling over `unwrap()` in production code,
+          especially in network, parsing, database, URL, header, and secret-loading paths.
+        - Do not expose OAuth tokens, client secrets, DSNs, cookies, or raw database URLs
+          in code, logs, errors, or sample config.
+        - Keep Rocket handlers thin and move reusable logic into helpers under `src/utils/`.
+        - Reuse shared app state (`MyState`) for HTTP clients and database pools.
+        - Prefer typed response structs over loose `serde_json::Value` parsing when practical.
+        - Use bound SQL parameters with `sqlx::query(...).bind(...)`; never interpolate untrusted input.
+
+    - path: "src/routes/**/*.rs"
+      instructions: |
+        Review route changes for OAuth flow correctness and user-safe failures.
+        - Check redirect URL construction, callback parameter handling, and status/state validation.
+        - Keep route logic lightweight and push service logic into helpers.
+        - Avoid leaking sensitive data in route responses or logs.
+
+    - path: "src/utils/**/*.rs"
+      instructions: |
+        Review helper code for request guard correctness, AniList API resilience, database safety,
+        and logging hygiene.
+        - Keep AniList constants centralized in `src/utils/consts.rs`.
+        - Keep state-token validation in request guards instead of duplicating it in handlers.
+        - Prefer focused utility code over growing one catch-all helper file.
+
+    - path: "src/main.rs"
+      instructions: |
+        Review startup and application wiring carefully.
+        - Check secret loading, Rocket configuration, database pool setup, and Sentry initialization.
+        - Fail fast with explicit errors when required runtime configuration is missing.
+        - Watch for logging that might reveal secrets or sensitive runtime values.
+
+    - path: "AGENTS.md"
+      instructions: |
+        Keep repository instructions consistent with the actual codebase.
+        Flag stale build/test commands, secret names, or workflow guidance that no longer matches the repo.
