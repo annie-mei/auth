@@ -4,7 +4,7 @@ use crate::utils::{
     structs::{MyState, StateToken, TokenResponse},
 };
 
-use rocket::{response::status::BadRequest, State};
+use rocket::{State, response::status::BadRequest};
 use serde_json::json;
 
 #[get("/authorized?<code>")]

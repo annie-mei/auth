@@ -1,10 +1,10 @@
 use crate::utils::{consts::ANILIST_AUTH, functions::get_state_token, structs::MyState};
 
 use rocket::{
+    State,
     http::{Cookie, CookieJar},
     response::Redirect,
     time::{Duration, OffsetDateTime},
-    State,
 };
 use url::Url;
 
