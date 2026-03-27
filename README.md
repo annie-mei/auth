@@ -1,2 +1,27 @@
 # auth
-Auth server for Anilist OAuth for Annie-Mei
+
+Auth server for AniList OAuth for Annie Mei.
+
+## Local development
+
+1. Copy `.env.example` to `.env`.
+2. Fill in the AniList OAuth credentials, Postgres connection string, and a Rocket `SECRET_KEY`.
+3. Start the service with `cargo run`.
+
+`SENTRY_DSN` is optional in local development. If it is unset, the service will start without Sentry.
+
+## Environment variables
+
+- `ANILIST_CLIENT_ID`
+- `ANILIST_SECRET`
+- `REDIRECT_URL`
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `SENTRY_DSN` (optional)
+
+## Validation
+
+- `cargo fmt --check`
+- `cargo check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test`
