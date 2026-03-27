@@ -8,80 +8,89 @@ use crate::{
     utils::structs::MyState,
 };
 
-use anyhow::anyhow;
-use shuttle_secrets::SecretStore;
+use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
+use std::env;
 
-#[shuttle_runtime::main]
-async fn rocket(
-    #[shuttle_secrets::Secrets] secret_store: SecretStore,
-) -> shuttle_rocket::ShuttleRocket {
-    let sentry_dsn = if let Some(client_id) = secret_store.get("SENTRY_DSN") {
-        client_id
-    } else {
-        return Err(anyhow!("Sentry DSN was not found").into());
-    };
+struct AppConfig {
+    sentry_dsn: Option<String>,
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+    database_url: String,
+    secret_key: String,
+}
 
-    let _guard = sentry::init((
-        sentry_dsn,
+impl AppConfig {
+    fn from_env() -> Result<Self> {
+        let _ = dotenvy::dotenv();
+
+        Ok(Self {
+            sentry_dsn: env::var("SENTRY_DSN").ok(),
+            client_id: required_env("ANILIST_CLIENT_ID")?,
+            client_secret: required_env("ANILIST_SECRET")?,
+            redirect_uri: required_env("REDIRECT_URL")?,
+            database_url: required_env("DATABASE_URL")?,
+            secret_key: required_env("SECRET_KEY")?,
+        })
+    }
+}
+
+fn required_env(key: &str) -> Result<String> {
+    env::var(key).with_context(|| format!("{key} was not found"))
+}
+
+fn init_sentry(dsn: &str) -> sentry::ClientInitGuard {
+    sentry::init((
+        dsn,
         sentry::ClientOptions {
             release: sentry::release_name!(),
-            traces_sample_rate: 1.0,
-            enable_profiling: true,
-            profiles_sample_rate: 1.0,
             ..Default::default()
         },
-    ));
+    ))
+}
 
-    let client_id = if let Some(client_id) = secret_store.get("ANILIST_CLIENT_ID") {
-        client_id
-    } else {
-        return Err(anyhow!("Anilist Client ID was not found").into());
-    };
-
-    let client_secret = if let Some(client_secret) = secret_store.get("ANILIST_SECRET") {
-        client_secret
-    } else {
-        return Err(anyhow!("Anilist Secret was not found").into());
-    };
-
-    let redirect_uri = if let Some(redirect_uri) = secret_store.get("REDIRECT_URL") {
-        redirect_uri
-    } else {
-        return Err(anyhow!("Anilist Redirect URL was not found").into());
-    };
-
-    let database_url = if let Some(database_url) = secret_store.get("DATABASE_URL") {
-        database_url
-    } else {
-        return Err(anyhow!("Database URL was not found").into());
-    };
-
-    let secret_key = if let Some(secret_key) = secret_store.get("SECRET_KEY") {
-        secret_key
-    } else {
-        return Err(anyhow!("Secret Key was not found").into());
-    };
-
+async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build>> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect(&database_url)
+        .connect(&config.database_url)
         .await
-        .map_err(|e| anyhow!("Failed to connect to database: {}", e))?;
+        .context("Failed to connect to the database")?;
+
+    let client = reqwest::Client::builder()
+        .user_agent(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .build()
+        .context("Failed to build HTTP client")?;
 
     let state = MyState {
-        client_id,
-        client_secret,
-        redirect_uri,
-        client: reqwest::Client::new(),
+        client_id: config.client_id.clone(),
+        client_secret: config.client_secret.clone(),
+        redirect_uri: config.redirect_uri.clone(),
+        client,
         pool,
     };
 
-    let figment = rocket::Config::figment().merge(("secret_key", secret_key));
+    let figment = rocket::Config::figment().merge(("secret_key", config.secret_key.clone()));
 
-    let rocket = rocket::custom(figment)
+    Ok(rocket::custom(figment)
         .mount("/", routes![login, authorized])
-        .manage(state);
+        .manage(state))
+}
 
-    Ok(rocket.into())
+#[rocket::main]
+async fn main() -> Result<()> {
+    let config = AppConfig::from_env()?;
+    let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
+
+    if config.sentry_dsn.is_none() {
+        info!("SENTRY_DSN not set; Sentry is disabled");
+    }
+
+    build_rocket(&config).await?.launch().await?;
+
+    Ok(())
 }

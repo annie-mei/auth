@@ -18,9 +18,9 @@ pub async fn login(state: &State<MyState>, jar: &CookieJar<'_>) -> Redirect {
         ("state", state_token.as_str()),
     ];
     let url = Url::parse_with_params(ANILIST_AUTH, &params).unwrap();
-    let cookie = Cookie::build("state", state_token)
+    let cookie = Cookie::build(("state", state_token))
         .expires(OffsetDateTime::now_utc() + Duration::minutes(5))
-        .finish();
+        .build();
 
     jar.add_private(cookie);
 
