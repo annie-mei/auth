@@ -18,7 +18,7 @@ struct AppConfig {
     client_secret: String,
     redirect_uri: String,
     database_url: String,
-    secret_key: String,
+    rocket_secret_key: String,
 }
 
 impl AppConfig {
@@ -31,7 +31,7 @@ impl AppConfig {
             client_secret: required_env("ANILIST_SECRET")?,
             redirect_uri: required_env("REDIRECT_URL")?,
             database_url: required_env("DATABASE_URL")?,
-            secret_key: required_env("SECRET_KEY")?,
+            rocket_secret_key: required_env("ROCKET_SECRET_KEY")?,
         })
     }
 }
@@ -74,7 +74,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         pool,
     };
 
-    let figment = rocket::Config::figment().merge(("secret_key", config.secret_key.clone()));
+    let figment = rocket::Config::figment().merge(("secret_key", config.rocket_secret_key.clone()));
 
     Ok(rocket::custom(figment)
         .mount("/", routes![login, authorized])
