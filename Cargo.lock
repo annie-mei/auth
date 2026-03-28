@@ -225,6 +225,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "annie-mei-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dotenvy",
+ "nanoid",
+ "reqwest 0.12.28",
+ "rocket",
+ "sentry",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "url",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -292,22 +308,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "auth"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dotenvy",
- "nanoid",
- "reqwest 0.12.28",
- "rocket",
- "sentry",
- "serde",
- "serde_json",
- "sqlx",
- "url",
-]
 
 [[package]]
 name = "autocfg"
