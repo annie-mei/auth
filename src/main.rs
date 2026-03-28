@@ -26,13 +26,25 @@ impl AppConfig {
         let _ = dotenvy::dotenv();
 
         Ok(Self {
-            sentry_dsn: env::var("SENTRY_DSN").ok(),
+            sentry_dsn: optional_env("SENTRY_DSN"),
             client_id: required_env("ANILIST_CLIENT_ID")?,
             client_secret: required_env("ANILIST_SECRET")?,
             redirect_uri: required_env("REDIRECT_URL")?,
             database_url: required_env("DATABASE_URL")?,
             rocket_secret_key: required_env("ROCKET_SECRET_KEY")?,
         })
+    }
+}
+
+fn optional_env(key: &str) -> Option<String> {
+    env::var(key).ok().and_then(non_empty_env_value)
+}
+
+fn non_empty_env_value(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -93,4 +105,19 @@ async fn main() -> Result<()> {
     build_rocket(&config).await?.launch().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::non_empty_env_value;
+
+    #[test]
+    fn non_empty_env_value_rejects_blank_strings() {
+        assert_eq!(non_empty_env_value(String::new()), None);
+        assert_eq!(non_empty_env_value("   ".to_string()), None);
+        assert_eq!(
+            non_empty_env_value("dsn".to_string()),
+            Some("dsn".to_string())
+        );
+    }
 }

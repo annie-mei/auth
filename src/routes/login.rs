@@ -33,10 +33,17 @@ pub async fn login(state: &State<MyState>, jar: &CookieJar<'_>) -> Redirect {
 #[cfg(test)]
 mod tests {
     use super::login;
-    use crate::utils::structs::MyState;
+    use crate::utils::structs::{MyState, StateToken};
 
-    use rocket::{Config, local::asynchronous::Client, routes};
+    use rocket::{Config, http::Status, local::asynchronous::Client, routes};
     use sqlx::postgres::PgPoolOptions;
+    use url::Url;
+
+    #[get("/consume?<state>")]
+    fn consume(state: &str, _state_token: StateToken<'_>) -> &'static str {
+        let _ = state;
+        "ok"
+    }
 
     fn build_test_rocket() -> rocket::Rocket<rocket::Build> {
         let figment =
@@ -53,7 +60,7 @@ mod tests {
         };
 
         rocket::custom(figment)
-            .mount("/", routes![login])
+            .mount("/", routes![login, consume])
             .manage(state)
     }
 
@@ -69,5 +76,35 @@ mod tests {
             .expect("login should set a cookie");
 
         assert!(set_cookie.contains("SameSite=Lax"));
+    }
+
+    #[rocket::async_test]
+    async fn state_cookie_is_single_use_after_validation() {
+        let client = Client::tracked(build_test_rocket())
+            .await
+            .expect("rocket client should build");
+        let response = client.get("/login").dispatch().await;
+        let redirect_url = response
+            .headers()
+            .get_one("location")
+            .expect("login should redirect");
+        let state = Url::parse(redirect_url)
+            .expect("redirect URL should parse")
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .map(|(_, value)| value.into_owned())
+            .expect("redirect URL should include state");
+
+        let first_response = client
+            .get(format!("/consume?state={state}"))
+            .dispatch()
+            .await;
+        assert_eq!(first_response.status(), Status::Ok);
+
+        let replay_response = client
+            .get(format!("/consume?state={state}"))
+            .dispatch()
+            .await;
+        assert_eq!(replay_response.status(), Status::BadRequest);
     }
 }

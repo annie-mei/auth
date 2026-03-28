@@ -61,6 +61,7 @@ pub fn is_valid_state_token(jar: &CookieJar, state: &str) -> bool {
 
     if let Some(state_cookie) = state_cookie {
         if state_cookie.value() == state {
+            jar.remove_private(("state", ""));
             return true;
         }
 
