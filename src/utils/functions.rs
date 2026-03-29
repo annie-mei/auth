@@ -114,6 +114,82 @@ pub async fn fetch_credential_by_anilist_id(
     .await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn upsert_inserts_new_credential(pool: Pool<Postgres>) {
+        upsert_oauth_credentials("111222333444555666", 987654321, "access_tok", Some("refresh_tok"), Some(Utc::now() + Duration::hours(1)), &pool)
+            .await
+            .expect("upsert should succeed");
+
+        let cred = fetch_credential_by_discord_user("111222333444555666", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should exist");
+
+        assert_eq!(cred.discord_user_id, "111222333444555666");
+        assert_eq!(cred.anilist_id, 987654321);
+        assert_eq!(cred.access_token, "access_tok");
+        assert_eq!(cred.refresh_token.as_deref(), Some("refresh_tok"));
+        assert!(cred.token_expires_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn upsert_updates_existing_credential(pool: Pool<Postgres>) {
+        upsert_oauth_credentials("user1", 111, "old_token", None, None, &pool)
+            .await
+            .expect("first upsert should succeed");
+
+        upsert_oauth_credentials("user1", 111, "new_token", Some("new_refresh"), None, &pool)
+            .await
+            .expect("second upsert should succeed");
+
+        let cred = fetch_credential_by_discord_user("user1", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should exist");
+
+        assert_eq!(cred.access_token, "new_token");
+        assert_eq!(cred.refresh_token.as_deref(), Some("new_refresh"));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn fetch_by_discord_user_returns_none_when_absent(pool: Pool<Postgres>) {
+        let result = fetch_credential_by_discord_user("nonexistent", &pool)
+            .await
+            .expect("fetch should not error");
+
+        assert!(result.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn fetch_by_anilist_id_finds_correct_credential(pool: Pool<Postgres>) {
+        upsert_oauth_credentials("user_a", 42, "tok_a", None, None, &pool)
+            .await
+            .expect("upsert should succeed");
+
+        let cred = fetch_credential_by_anilist_id(42, &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should exist");
+
+        assert_eq!(cred.discord_user_id, "user_a");
+        assert_eq!(cred.anilist_id, 42);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn fetch_by_anilist_id_returns_none_when_absent(pool: Pool<Postgres>) {
+        let result = fetch_credential_by_anilist_id(99999, &pool)
+            .await
+            .expect("fetch should not error");
+
+        assert!(result.is_none());
+    }
+}
+
 pub fn get_state_token() -> String {
     nanoid!(32)
 }
