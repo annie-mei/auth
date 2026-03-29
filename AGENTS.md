@@ -3,12 +3,14 @@
 This document is for coding agents working in `auth/`, the AniList OAuth server used by the sibling Annie Mei app in `../annie-mei`.
 
 ## Project Summary
+
 - Rust 2021 binary crate built on Rocket.
 - Handles AniList OAuth login and callback exchange.
 - Persists AniList access tokens in Postgres via `sqlx`.
 - Reports runtime issues to Sentry.
 
 ## Repository Layout
+
 ```text
 src/
 |- main.rs              # App entrypoint, secrets loading, Rocket setup
@@ -29,7 +31,9 @@ rustfmt.toml            # formatting config
 ```
 
 ## Conventions to Follow
+
 ### Code Style
+
 - Run `cargo fmt` before finishing code changes.
 - Run `cargo clippy` and fix warnings when the task touches behavior or structure.
 - Prefer `?` over `unwrap()` for fallible paths.
@@ -37,6 +41,7 @@ rustfmt.toml            # formatting config
 - Preserve the existing pattern of thin Rocket handlers plus helper functions in `src/utils/`.
 
 ### Git Commits
+
 - Use Conventional Commits and prefer `type(scope): summary`.
 - Example: `fix(auth): handle AniList callback parse failures`.
 - Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`.
@@ -44,6 +49,7 @@ rustfmt.toml            # formatting config
 - Squash WIP commits before opening a PR.
 
 ### Git Safety
+
 - Never commit or push directly to `main`; use a feature branch.
 - All branches should have a Linear ticket and use that ticket's branch naming.
 - Do not create tickets automatically; check for an existing ticket first and ask before creating one.
@@ -51,15 +57,51 @@ rustfmt.toml            # formatting config
 - When git issues occur, explain the problem, present options, and ask the user how they want to resolve it.
 
 ### Pull Requests
+
 - PR titles should use `[ANNIE-<ticket-number>]/<description>`.
 - PR descriptions should include `## Summary`, `## Type of Change`, `## Changes`, and `## Validation`.
 - Include `### Notes` or `## References` when implementation details or operational context matter.
 - In `## Validation`, list the exact commands run and any manual OAuth or local runtime checks.
 
+PR template:
+
+```md
+## Summary
+
+## Type of Change
+
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Refactor
+- [ ] Documentation
+- [ ] Chore
+
+## Changes
+
+- <full-commit-sha>: <what changed>
+
+### Notes (optional)
+
+### High-risk resources (optional)
+
+## Validation
+
+- [ ] <relevant cargo test / cargo clippy / manual verification steps>
+- [ ] <Discord QA or runtime verification, if applicable>
+
+## References (optional)
+
+---
+
+This PR description was written by MODEL_NAME.
+```
+
 ## Build, Lint, and Test Commands
+
 Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 
 ### Core commands
+
 - Format: `cargo fmt`
 - Format check: `cargo fmt --check`
 - Typecheck: `cargo check`
@@ -70,19 +112,23 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 - List tests: `cargo test -- --list`
 
 ### Running a single test
+
 - By substring match: `cargo test state_token`
 - By exact test path: `cargo test utils::functions::tests::is_valid_state_token -- --exact`
 - Show test output: `cargo test state_token -- --nocapture`
 - Future integration test file: `cargo test --test oauth_flow`
 
 ### Verification notes
+
 - `cargo fmt --check` currently runs clean.
 - `cargo test -- --list` currently fails because a transitive dependency needs `protoc`.
 - `cargo test -- --list` also fails because `sqlx = 0.6` is missing a runtime feature in `Cargo.toml`.
 - On macOS, installing protobuf is typically `brew install protobuf`.
 
 ## Environment and Secrets
+
 `src/main.rs` currently expects these runtime secrets/config values:
+
 - `SENTRY_DSN`
 - `ANILIST_CLIENT_ID`
 - `ANILIST_SECRET`
@@ -91,19 +137,23 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 - `ROCKET_SECRET_KEY`
 
 Important notes:
+
 - The checked-in sample secrets files previously used `SECRET`, and runtime now reads `ROCKET_SECRET_KEY`.
 - Treat runtime code as the source of truth unless you are intentionally fixing that mismatch.
 - Never commit real `Secrets.toml`, `Secrets.dev.toml`, or `Rocket.toml` files.
 - Never log OAuth tokens, client secrets, DSNs, or raw database URLs.
 
 ## Code Style Guidelines
+
 ### Formatting
+
 - Always let `rustfmt` decide final formatting.
 - Do not hand-align fields or parameters.
 - Preserve the existing compact Rocket route style unless a refactor clearly improves readability.
 - Keep files ASCII unless the file already requires Unicode.
 
 ### Imports and naming
+
 - Match nearby files rather than imposing a brand-new import order.
 - Current modules usually keep `crate::...` imports first, then standard library or external imports.
 - Separate import groups with a blank line when it improves readability.
@@ -112,6 +162,7 @@ Important notes:
 - Use `PascalCase` for structs and enums, and `SCREAMING_SNAKE_CASE` for constants.
 
 ### Types and structure
+
 - Prefer concrete types over trait objects unless dynamic dispatch is required.
 - Prefer borrowing (`&str`, `&State<T>`, `&Pool<Postgres>`) when ownership is not needed.
 - Keep shared runtime dependencies inside app state (`MyState`) or a successor struct.
@@ -120,6 +171,7 @@ Important notes:
 - Update `src/routes/mod.rs` or `src/utils/mod.rs` when adding modules.
 
 ### Async, HTTP, and database code
+
 - Keep route handlers `async` and return Rocket-friendly types.
 - Reuse the shared `reqwest::Client` stored in app state.
 - Reuse the shared Postgres pool from app state.
@@ -128,6 +180,7 @@ Important notes:
 - Keep state validation inside request guards instead of duplicating it in handlers.
 
 ### Error handling
+
 - Prefer `Result` returns and the `?` operator for fallible code.
 - Use `map_err(...)` when converting low-level failures into Rocket response types.
 - Avoid adding new `unwrap()` or `expect()` calls in network, DB, parsing, header, URL, or secret-loading paths.
@@ -136,6 +189,7 @@ Important notes:
 - When reading secrets, fail fast with explicit messages rather than silently defaulting.
 
 ### Logging, testing, and comments
+
 - The current codebase uses Rocket logging macros such as `info!`; stay consistent unless you are intentionally migrating logging.
 - Log high-level state transitions, not sensitive payloads.
 - Keep Sentry initialization in startup code, not scattered across handlers.
@@ -145,6 +199,7 @@ Important notes:
 - Keep comments sparse and useful; explain why, not what.
 
 ## Repo-Specific Gotchas
+
 - This crate is an auth server for Annie Mei, not the main bot codebase.
 - Changes to OAuth parameters, callback behavior, or token persistence may require matching updates in `../annie-mei`.
 - The sample config files are examples only; they are not guaranteed to match runtime code perfectly.
@@ -153,6 +208,7 @@ Important notes:
 - The most reusable logic currently lives under `src/utils/`; keep additions focused instead of growing one catch-all file.
 
 ## Maintenance Notes
+
 - Update this file when build commands, test layout, or repo conventions change.
 - If you hit the known `protoc` or `sqlx` runtime blockers during verification, mention them in your handoff.
 - Follow the checked-in code over sample config files when they disagree.
