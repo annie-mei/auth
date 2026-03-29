@@ -88,10 +88,10 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 - `ANILIST_SECRET`
 - `REDIRECT_URL`
 - `DATABASE_URL`
-- `SECRET_KEY`
+- `ROCKET_SECRET_KEY`
 
 Important notes:
-- The checked-in sample secrets files currently use `SECRET`, but `src/main.rs` reads `SECRET_KEY`.
+- The checked-in sample secrets files previously used `SECRET`, and runtime now reads `ROCKET_SECRET_KEY`.
 - Treat runtime code as the source of truth unless you are intentionally fixing that mismatch.
 - Never commit real `Secrets.toml`, `Secrets.dev.toml`, or `Rocket.toml` files.
 - Never log OAuth tokens, client secrets, DSNs, or raw database URLs.

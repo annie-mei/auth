@@ -2,7 +2,7 @@ language: "en-US"
 early_access: true
 
 tone_instructions: >
-  Review as a pragmatic Rust teammate. Prioritize correctness, operational safety,
+  Review as a pragmatic Rust teammate. Prioritize correctness,
   secret handling, and maintainability. Be concise, specific, and action-oriented.
   Focus on meaningful issues rather than style nits that rustfmt or clippy already handle.
 

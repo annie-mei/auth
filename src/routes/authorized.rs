@@ -3,9 +3,9 @@ use crate::utils::{
     functions::{fetch_viewer_id, save_access_token},
     structs::{MyState, StateToken, TokenResponse},
 };
-use std::collections::HashMap;
 
-use rocket::{log::private::info, response::status::BadRequest, State};
+use rocket::{State, response::status::BadRequest};
+use serde_json::json;
 
 #[get("/authorized?<code>")]
 pub async fn authorized(
@@ -15,52 +15,39 @@ pub async fn authorized(
 ) -> Result<String, BadRequest<String>> {
     info!("Checking state token ...");
 
-    let params = HashMap::from([
-        ("grant_type", "authorization_code"),
-        ("client_id", state.client_id.as_str()),
-        ("client_secret", state.client_secret.as_str()),
-        ("redirect_uri", state.redirect_uri.as_str()),
-        ("code", code.as_str()),
-    ]);
+    let token_exchange_error =
+        |error| BadRequest(format!("AniList token exchange failed: {error}"));
 
     let response = state
         .client
         .post(ANILIST_TOKEN)
-        .json(&params)
+        .json(&json!({
+            "grant_type": "authorization_code",
+            "client_id": state.client_id.as_str(),
+            "client_secret": state.client_secret.as_str(),
+            "redirect_uri": state.redirect_uri.as_str(),
+            "code": code,
+        }))
         .send()
         .await
-        .map_err(|e| BadRequest(Some(e.to_string())))?;
+        .map_err(token_exchange_error)?
+        .error_for_status()
+        .map_err(token_exchange_error)?;
 
-    // If the response fails to parse, return an error.
-    // We want the user to try again.
     let access_token = response
         .json::<TokenResponse>()
         .await
-        .map_err(|e| BadRequest(Some(e.to_string())))?
+        .map_err(|e| BadRequest(format!("Failed to parse AniList token response: {e}")))?
         .access_token;
 
     info!("Fetching User data ...");
+    let user_id = fetch_viewer_id(&state.client, &access_token).await?;
+    info!("User data fetched successfully");
 
-    info!("User data fetched successfully! ...");
+    save_access_token(&access_token, user_id, &state.pool)
+        .await
+        .map_err(|e| BadRequest(format!("Failed to save access token: {e}")))?;
 
-    match fetch_viewer_id(state.client.clone(), access_token.clone()).await {
-        Ok(id) => {
-            info!("User ID: {:#?}", id);
-            let response = save_access_token(access_token, id, &state.pool).await;
-            match response {
-                Ok(_) => info!("Saved access token"),
-                Err(e) => {
-                    let message = format!("Failed to save access token: {:#?}", e);
-                    info!("Error: {:#?}", message);
-                    return Err(BadRequest(Some(message)));
-                }
-            }
-            Ok("Success".to_string())
-        }
-        Err(e) => {
-            let message = format!("Failed to fetch viewer ID: {:#?}", e);
-            info!("Error: {:#?}", message);
-            Err(BadRequest(Some(message)))
-        }
-    }
+    info!("Saved access token");
+    Ok("Success".to_string())
 }

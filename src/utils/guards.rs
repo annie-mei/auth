@@ -1,6 +1,5 @@
 use rocket::{
     http::Status,
-    log::private::info,
     request::{FromRequest, Outcome, Request},
 };
 
@@ -15,18 +14,18 @@ impl<'r> FromRequest<'r> for StateToken<'r> {
         let jar = req.cookies();
 
         match req.query_value::<&str>("state") {
-            None => Outcome::Failure((Status::BadRequest, StateTokenError::Missing)),
+            None => Outcome::Error((Status::BadRequest, StateTokenError::Missing)),
             Some(state) => match state {
                 Ok(state) => {
                     if is_valid_state_token(jar, state) {
                         Outcome::Success(StateToken(state))
                     } else {
-                        Outcome::Failure((Status::BadRequest, StateTokenError::Invalid))
+                        Outcome::Error((Status::BadRequest, StateTokenError::Invalid))
                     }
                 }
-                Err(e) => {
-                    info!("Error: {:#?}", e);
-                    Outcome::Failure((Status::BadRequest, StateTokenError::Invalid))
+                Err(error) => {
+                    info!("Failed to parse state query parameter: {error:?}");
+                    Outcome::Error((Status::BadRequest, StateTokenError::Invalid))
                 }
             },
         }

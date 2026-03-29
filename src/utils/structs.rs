@@ -1,4 +1,3 @@
-use rocket_db_pools::sqlx;
 use serde::Deserialize;
 use sqlx::PgPool;
 
@@ -11,12 +10,24 @@ pub struct MyState {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct TokenResponse {
-    pub token_type: String,
-    pub expires_in: i32,
     pub access_token: String,
-    pub refresh_token: String,
+}
+
+#[derive(Deserialize)]
+pub struct ViewerResponse {
+    pub data: ViewerData,
+}
+
+#[derive(Deserialize)]
+pub struct ViewerData {
+    #[serde(rename = "Viewer")]
+    pub viewer: Viewer,
+}
+
+#[derive(Deserialize)]
+pub struct Viewer {
+    pub id: i64,
 }
 
 pub struct StateToken<'r>(pub &'r str);
