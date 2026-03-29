@@ -176,16 +176,13 @@ pub async fn consume_oauth_session(
     #[derive(sqlx::FromRow)]
     struct Diag {
         used_at: Option<DateTime<Utc>>,
-        expires_at: DateTime<Utc>,
     }
 
-    let diag = sqlx::query_as::<_, Diag>(
-        "SELECT used_at, expires_at FROM oauth_sessions WHERE state = $1",
-    )
-    .bind(state_val)
-    .fetch_optional(db)
-    .await
-    .map_err(SessionConsumeError::Db)?;
+    let diag = sqlx::query_as::<_, Diag>("SELECT used_at FROM oauth_sessions WHERE state = $1")
+        .bind(state_val)
+        .fetch_optional(db)
+        .await
+        .map_err(SessionConsumeError::Db)?;
 
     match diag {
         None => Err(SessionConsumeError::NotFound),
@@ -197,8 +194,8 @@ pub async fn consume_oauth_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        consume_oauth_session, fetch_credential_by_anilist_id, fetch_credential_by_discord_user,
-        insert_oauth_session, upsert_oauth_credentials, SessionConsumeError,
+        SessionConsumeError, consume_oauth_session, fetch_credential_by_anilist_id,
+        fetch_credential_by_discord_user, insert_oauth_session, upsert_oauth_credentials,
     };
     use chrono::{Duration, Utc};
     use sqlx::{Pool, Postgres};
