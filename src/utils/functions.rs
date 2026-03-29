@@ -138,7 +138,7 @@ pub fn get_state_token() -> String {
 ///
 /// The bot constructs `HMAC-SHA256(discord_user_id + ":" + ts, BOT_AUTH_SECRET)`
 /// and passes the hex-encoded result as `sig`. This function verifies that the
-/// signature is valid and the timestamp is within a 5-minute window.
+/// signature is valid and the timestamp is within a 2-minute window.
 pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: &str) -> bool {
     let timestamp: i64 = match ts.parse() {
         Ok(t) => t,
@@ -146,7 +146,7 @@ pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: 
     };
 
     let now = Utc::now().timestamp();
-    if now - timestamp > 300 || timestamp > now {
+    if now - timestamp > 120 || timestamp > now {
         return false;
     }
 
