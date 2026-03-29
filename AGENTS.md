@@ -137,6 +137,7 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 - `REDIRECT_URL`
 - `DATABASE_URL`
 - `ROCKET_SECRET_KEY`
+- `BOT_AUTH_SECRET`
 
 Important notes:
 

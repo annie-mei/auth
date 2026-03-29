@@ -146,7 +146,7 @@ pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: 
     };
 
     let now = Utc::now().timestamp();
-    if (now - timestamp).abs() > 300 {
+    if now - timestamp > 300 || timestamp > now {
         return false;
     }
 
