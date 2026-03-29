@@ -121,9 +121,16 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn upsert_inserts_new_credential(pool: Pool<Postgres>) {
-        upsert_oauth_credentials("111222333444555666", 987654321, "access_tok", Some("refresh_tok"), Some(Utc::now() + Duration::hours(1)), &pool)
-            .await
-            .expect("upsert should succeed");
+        upsert_oauth_credentials(
+            "111222333444555666",
+            987654321,
+            "access_tok",
+            Some("refresh_tok"),
+            Some(Utc::now() + Duration::hours(1)),
+            &pool,
+        )
+        .await
+        .expect("upsert should succeed");
 
         let cred = fetch_credential_by_discord_user("111222333444555666", &pool)
             .await
