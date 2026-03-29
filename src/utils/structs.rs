@@ -29,6 +29,15 @@ pub struct OAuthCredential {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct OAuthSession {
+    pub state: String,
+    pub discord_user_id: String,
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Deserialize)]
 pub struct ViewerResponse {
     pub data: ViewerData,
@@ -45,12 +54,15 @@ pub struct Viewer {
     pub id: i64,
 }
 
-pub struct StateToken<'r>(pub &'r str);
+/// Carries the Discord user ID recovered from the validated OAuth session.
+pub struct StateToken(pub String);
 
 #[derive(Debug)]
 pub enum StateTokenError {
     Missing,
     Invalid,
+    Expired,
+    Replayed,
 }
 
 #[cfg(test)]
