@@ -4,9 +4,11 @@ use crate::utils::{
 };
 
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use nanoid::nanoid;
 use rocket::response::status::BadRequest;
 use serde_json::json;
+use sha2::Sha256;
 use sqlx::{Pool, Postgres};
 
 #[tracing::instrument(skip(client, access_token))]
@@ -132,6 +134,35 @@ pub fn get_state_token() -> String {
     nanoid!(32)
 }
 
+/// Verifies that a login request was signed by the bot using the shared secret.
+///
+/// The bot constructs `HMAC-SHA256(discord_user_id + ":" + ts, BOT_AUTH_SECRET)`
+/// and passes the hex-encoded result as `sig`. This function verifies that the
+/// signature is valid and the timestamp is within a 5-minute window.
+pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: &str) -> bool {
+    let timestamp: i64 = match ts.parse() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    let now = Utc::now().timestamp();
+    if (now - timestamp).abs() > 300 {
+        return false;
+    }
+
+    let sig_bytes = match hex::decode(sig) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
+    type HmacSha256 = Hmac<Sha256>;
+    let message = format!("{discord_user_id}:{ts}");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(message.as_bytes());
+    mac.verify_slice(&sig_bytes).is_ok()
+}
+
 /// Inserts a new OAuth session record. The session expires in 5 minutes.
 #[tracing::instrument(skip(state, db))]
 pub async fn insert_oauth_session(
@@ -212,9 +243,59 @@ mod tests {
     use super::{
         SessionConsumeError, consume_oauth_session, fetch_credential_by_anilist_id,
         fetch_credential_by_discord_user, insert_oauth_session, upsert_oauth_credentials,
+        verify_bot_signature,
     };
     use chrono::{Duration, Utc};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
     use sqlx::{Pool, Postgres};
+
+    fn make_sig(discord_user_id: &str, ts: i64, secret: &str) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+        let msg = format!("{discord_user_id}:{ts}");
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(msg.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    #[test]
+    fn is_valid_state_token_accepts_correct_signature() {
+        let secret = "test_secret";
+        let ts = Utc::now().timestamp();
+        let sig = make_sig("user1", ts, secret);
+        assert!(verify_bot_signature("user1", &ts.to_string(), &sig, secret));
+    }
+
+    #[test]
+    fn is_valid_state_token_rejects_tampered_user() {
+        let secret = "test_secret";
+        let ts = Utc::now().timestamp();
+        let sig = make_sig("user1", ts, secret);
+        assert!(!verify_bot_signature(
+            "user2",
+            &ts.to_string(),
+            &sig,
+            secret
+        ));
+    }
+
+    #[test]
+    fn is_valid_state_token_rejects_expired_timestamp() {
+        let secret = "test_secret";
+        let ts = Utc::now().timestamp() - 400;
+        let sig = make_sig("user1", ts, secret);
+        assert!(!verify_bot_signature(
+            "user1",
+            &ts.to_string(),
+            &sig,
+            secret
+        ));
+    }
+
+    #[test]
+    fn is_valid_state_token_rejects_bad_hex() {
+        assert!(!verify_bot_signature("u", "0", "not_hex!!!", "s"));
+    }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn upsert_inserts_new_credential(pool: Pool<Postgres>) {

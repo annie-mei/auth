@@ -6,6 +6,7 @@ pub struct MyState {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
+    pub bot_auth_secret: String,
     pub client: reqwest::Client,
     pub pool: PgPool,
 }

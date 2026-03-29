@@ -18,6 +18,7 @@ struct AppConfig {
     client_id: String,
     client_secret: String,
     redirect_uri: String,
+    bot_auth_secret: String,
     database_url: String,
     rocket_secret_key: String,
 }
@@ -31,6 +32,7 @@ impl AppConfig {
             client_id: required_env("ANILIST_CLIENT_ID")?,
             client_secret: required_env("ANILIST_SECRET")?,
             redirect_uri: required_env("REDIRECT_URL")?,
+            bot_auth_secret: required_env("BOT_AUTH_SECRET")?,
             database_url: required_env("DATABASE_URL")?,
             rocket_secret_key: required_env("ROCKET_SECRET_KEY")?,
         })
@@ -90,6 +92,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         client_id: config.client_id.clone(),
         client_secret: config.client_secret.clone(),
         redirect_uri: config.redirect_uri.clone(),
+        bot_auth_secret: config.bot_auth_secret.clone(),
         client,
         pool,
     };
