@@ -8,5 +8,3 @@ CREATE TABLE IF NOT EXISTS oauth_credentials (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_oauth_credentials_anilist_id UNIQUE (anilist_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_oauth_credentials_anilist_id ON oauth_credentials (anilist_id);
