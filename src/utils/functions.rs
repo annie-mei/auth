@@ -133,7 +133,7 @@ pub fn get_state_token() -> String {
 }
 
 /// Inserts a new OAuth session record. The session expires in 5 minutes.
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(state, db))]
 pub async fn insert_oauth_session(
     state: &str,
     discord_user_id: &str,
@@ -167,7 +167,7 @@ pub enum SessionConsumeError {
 ///
 /// On success the session record is consumed and cannot be replayed. On failure,
 /// the reason is diagnosed via a secondary SELECT so callers can log it.
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(state_val, db))]
 pub async fn consume_oauth_session(
     state_val: &str,
     db: &Pool<Postgres>,
