@@ -45,7 +45,7 @@ jobs:
         with:
           cache-on-failure: "true"
           prefix-key: "auth"
-          shared-key: "cargo-ci"
+          shared-key: "cargo-clippy"
           save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
 
       - name: Build check
@@ -59,7 +59,6 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       CARGO_TERM_COLOR: always
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout
@@ -75,8 +74,10 @@ jobs:
         with:
           cache-on-failure: "true"
           prefix-key: "auth"
-          shared-key: "cargo-ci"
+          shared-key: "cargo-test"
           save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
 
       - name: Test
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: cargo test
