@@ -49,7 +49,9 @@ fn non_empty_env_value(value: String) -> Option<String> {
 }
 
 fn required_env(key: &str) -> Result<String> {
-    env::var(key).with_context(|| format!("{key} was not found"))
+    let value = env::var(key).with_context(|| format!("{key} was not found"))?;
+
+    non_empty_env_value(value).with_context(|| format!("{key} was empty"))
 }
 
 fn init_sentry(dsn: &str) -> sentry::ClientInitGuard {
@@ -99,7 +101,7 @@ async fn main() -> Result<()> {
     let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
 
     if config.sentry_dsn.is_none() {
-        info!("SENTRY_DSN not set; Sentry is disabled");
+        eprintln!("SENTRY_DSN not set; Sentry is disabled");
     }
 
     build_rocket(&config).await?.launch().await?;
@@ -109,7 +111,8 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::non_empty_env_value;
+    use super::{non_empty_env_value, required_env};
+    use std::env;
 
     #[test]
     fn non_empty_env_value_rejects_blank_strings() {
@@ -119,5 +122,20 @@ mod tests {
             non_empty_env_value("dsn".to_string()),
             Some("dsn".to_string())
         );
+    }
+
+    #[test]
+    fn required_env_rejects_blank_values() {
+        let key = "ANNIE_MEI_AUTH_REQUIRED_ENV_TEST";
+
+        unsafe { env::set_var(key, "   ") };
+        let error = required_env(key).expect_err("blank env vars should fail validation");
+        assert!(error.to_string().contains("was empty"));
+
+        unsafe { env::set_var(key, "value") };
+        let value = required_env(key).expect("non-empty env vars should pass validation");
+        assert_eq!(value, "value");
+
+        unsafe { env::remove_var(key) };
     }
 }
