@@ -16,8 +16,12 @@ pub async fn authorized(
 ) -> Result<String, BadRequest<String>> {
     info!("State token validated; beginning token exchange");
 
-    let token_exchange_error =
-        |error| BadRequest(format!("AniList token exchange failed: {error}"));
+    sentry::configure_scope(|scope| {
+        scope.set_user(Some(sentry::User {
+            id: Some(state_token.0.clone()),
+            ..Default::default()
+        }));
+    });
 
     let response = state
         .client
@@ -31,14 +35,20 @@ pub async fn authorized(
         }))
         .send()
         .await
-        .map_err(token_exchange_error)?
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("AniList token exchange failed: {e}"))
+        })?
         .error_for_status()
-        .map_err(token_exchange_error)?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("AniList token exchange failed: {e}"))
+        })?;
 
-    let token_response = response
-        .json::<TokenResponse>()
-        .await
-        .map_err(|e| BadRequest(format!("Failed to parse AniList token response: {e}")))?;
+    let token_response = response.json::<TokenResponse>().await.map_err(|e| {
+        sentry::capture_error(&e);
+        BadRequest(format!("Failed to parse AniList token response: {e}"))
+    })?;
 
     let token_expires_at = token_response
         .expires_in
@@ -57,7 +67,10 @@ pub async fn authorized(
         &state.pool,
     )
     .await
-    .map_err(|e| BadRequest(format!("Failed to save OAuth credentials: {e}")))?;
+    .map_err(|e| {
+        sentry::capture_error(&e);
+        BadRequest(format!("Failed to save OAuth credentials: {e}"))
+    })?;
 
     info!("Saved OAuth credentials for Discord user");
     Ok("Success".to_string())

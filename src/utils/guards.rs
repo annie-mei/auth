@@ -40,9 +40,14 @@ impl<'r> FromRequest<'r> for StateToken {
             }
             Err(SessionConsumeError::AlreadyUsed) => {
                 info!("State validation failed: replay attempt detected");
+                sentry::capture_message(
+                    "OAuth state replay attempt detected",
+                    sentry::Level::Warning,
+                );
                 Outcome::Error((Status::BadRequest, StateTokenError::Replayed))
             }
             Err(SessionConsumeError::Db(e)) => {
+                sentry::capture_error(&e);
                 error!("Database error during state validation: {e}");
                 Outcome::Error((Status::InternalServerError, StateTokenError::Invalid))
             }

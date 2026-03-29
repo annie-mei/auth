@@ -27,14 +27,23 @@ pub async fn fetch_viewer_id(
         .json(&json!({ "query": USER_QUERY }))
         .send()
         .await
-        .map_err(|e| BadRequest(format!("Failed to fetch AniList viewer: {e}")))?
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("Failed to fetch AniList viewer: {e}"))
+        })?
         .error_for_status()
-        .map_err(|e| BadRequest(format!("AniList viewer request failed: {e}")))?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("AniList viewer request failed: {e}"))
+        })?;
 
     let viewer_response = viewer_response
         .json::<ViewerResponse>()
         .await
-        .map_err(|e| BadRequest(format!("Failed to parse AniList viewer: {e}")))?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("Failed to parse AniList viewer: {e}"))
+        })?;
 
     Ok(viewer_response.data.viewer.id)
 }

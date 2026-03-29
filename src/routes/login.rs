@@ -24,7 +24,10 @@ pub async fn login(
 
     insert_oauth_session(&state_token, discord_user_id, &state.pool)
         .await
-        .map_err(|e| BadRequest(format!("Failed to create OAuth session: {e}")))?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("Failed to create OAuth session: {e}"))
+        })?;
 
     info!("Created OAuth session for Discord user");
     Ok(Redirect::to(url.to_string()))
