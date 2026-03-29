@@ -140,8 +140,11 @@ pub fn is_valid_state_token(jar: &CookieJar, state: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use chrono::Duration;
+    use super::{
+        fetch_credential_by_anilist_id, fetch_credential_by_discord_user, upsert_oauth_credentials,
+    };
+    use chrono::{Duration, Utc};
+    use sqlx::{Pool, Postgres};
 
     #[sqlx::test(migrations = "./migrations")]
     async fn upsert_inserts_new_credential(pool: Pool<Postgres>) {
