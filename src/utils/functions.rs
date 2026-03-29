@@ -114,6 +114,30 @@ pub async fn fetch_credential_by_anilist_id(
     .await
 }
 
+pub fn get_state_token() -> String {
+    nanoid!(32)
+}
+
+pub fn is_valid_state_token(jar: &CookieJar, state: &str) -> bool {
+    let state_cookie = jar.get_private("state").or_else(|| {
+        info!("State cookie not found from get_private");
+        jar.get_pending("state")
+    });
+
+    if let Some(state_cookie) = state_cookie {
+        if state_cookie.value() == state {
+            jar.remove_private(("state", ""));
+            return true;
+        }
+
+        info!("State token mismatch");
+    } else {
+        info!("State cookie not found");
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,28 +219,4 @@ mod tests {
 
         assert!(result.is_none());
     }
-}
-
-pub fn get_state_token() -> String {
-    nanoid!(32)
-}
-
-pub fn is_valid_state_token(jar: &CookieJar, state: &str) -> bool {
-    let state_cookie = jar.get_private("state").or_else(|| {
-        info!("State cookie not found from get_private");
-        jar.get_pending("state")
-    });
-
-    if let Some(state_cookie) = state_cookie {
-        if state_cookie.value() == state {
-            jar.remove_private(("state", ""));
-            return true;
-        }
-
-        info!("State token mismatch");
-    } else {
-        info!("State cookie not found");
-    }
-
-    false
 }
