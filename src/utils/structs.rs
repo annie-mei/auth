@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::PgPool;
 
@@ -12,6 +13,20 @@ pub struct MyState {
 #[derive(Debug, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_in: Option<i64>,
+    pub token_type: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct OAuthCredential {
+    pub discord_user_id: String,
+    pub anilist_id: i64,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub token_expires_at: Option<DateTime<Utc>>,
+    pub token_updated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -36,4 +51,34 @@ pub struct StateToken<'r>(pub &'r str);
 pub enum StateTokenError {
     Missing,
     Invalid,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TokenResponse;
+
+    #[test]
+    fn token_response_deserializes_full_payload() {
+        let json = r#"{
+            "access_token": "tok_abc",
+            "refresh_token": "ref_xyz",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        }"#;
+        let r: TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(r.access_token, "tok_abc");
+        assert_eq!(r.refresh_token.as_deref(), Some("ref_xyz"));
+        assert_eq!(r.expires_in, Some(3600));
+        assert_eq!(r.token_type.as_deref(), Some("Bearer"));
+    }
+
+    #[test]
+    fn token_response_deserializes_access_token_only() {
+        let json = r#"{"access_token": "tok_abc"}"#;
+        let r: TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(r.access_token, "tok_abc");
+        assert!(r.refresh_token.is_none());
+        assert!(r.expires_in.is_none());
+        assert!(r.token_type.is_none());
+    }
 }
