@@ -126,3 +126,198 @@ fn callback_error(code: &str, message: &str, status: Status) -> Custom<Json<Call
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::authorized;
+    use crate::{
+        routes::login::login,
+        utils::{
+            functions::fetch_credential_by_discord_user,
+            structs::{CallbackResponse, MyState},
+        },
+    };
+    use rocket::{Config, http::Status, local::asynchronous::Client, routes};
+    use sqlx::{Pool, Postgres};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    fn build_test_rocket(
+        pool: Pool<Postgres>,
+        token_endpoint: String,
+        user_endpoint: String,
+    ) -> rocket::Rocket<rocket::Build> {
+        let figment =
+            Config::figment().merge(("secret_key", "0123456789abcdef0123456789abcdef0123456789A="));
+
+        let state = MyState {
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
+            token_endpoint,
+            user_endpoint,
+            client: reqwest::Client::new(),
+            pool,
+        };
+
+        rocket::custom(figment)
+            .mount("/", routes![login, authorized])
+            .manage(state)
+    }
+
+    async fn login_and_extract_state(client: &Client) -> String {
+        let response = client
+            .get("/login?discord_user_id=555666777888")
+            .dispatch()
+            .await;
+        let location = response
+            .headers()
+            .get_one("location")
+            .expect("login should redirect");
+        url::Url::parse(location)
+            .expect("redirect URL should parse")
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .map(|(_, value)| value.to_string())
+            .expect("redirect URL should contain state")
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_happy_path_persists_oauth_credentials(pool: Pool<Postgres>) {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access_1",
+                "refresh_token": "refresh_1",
+                "expires_in": 3600,
+                "token_type": "Bearer"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "Viewer": { "id": 12345 } }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            format!("{}/token", mock_server.uri()),
+            format!("{}/graphql", mock_server.uri()),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let response = client
+            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "success");
+        assert_eq!(callback.code, "authorized");
+
+        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should be persisted");
+
+        assert_eq!(persisted.discord_user_id, "555666777888");
+        assert_eq!(persisted.anilist_id, 12345);
+        assert_eq!(persisted.access_token, "access_1");
+        assert_eq!(persisted.refresh_token.as_deref(), Some("refresh_1"));
+        assert!(persisted.token_expires_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_invalid_grant_returns_friendly_error(pool: Pool<Postgres>) {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            format!("{}/token", mock_server.uri()),
+            format!("{}/graphql", mock_server.uri()),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let response = client
+            .get(format!("/authorized?state={state}&code=bad_code"))
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "token_exchange_failed");
+        assert!(callback.message.contains("invalid or expired"));
+
+        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
+            .await
+            .expect("fetch should not error");
+        assert!(persisted.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_handles_access_denied_callback(pool: Pool<Postgres>) {
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            "https://anilist.co/api/v2/oauth/token".to_string(),
+            "https://graphql.anilist.co".to_string(),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let response = client
+            .get(format!(
+                "/authorized?state={state}&error=access_denied&error_description=Denied%20by%20user"
+            ))
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "oauth_error");
+        assert_eq!(callback.message, "Denied by user");
+
+        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
+            .await
+            .expect("fetch should not error");
+        assert!(persisted.is_none());
+    }
+}
