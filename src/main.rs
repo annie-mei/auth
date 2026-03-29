@@ -71,6 +71,11 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         .await
         .context("Failed to connect to the database")?;
 
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .context("Failed to run database migrations")?;
+
     let client = reqwest::Client::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),

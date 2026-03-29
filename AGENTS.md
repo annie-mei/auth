@@ -12,8 +12,11 @@ This document is for coding agents working in `auth/`, the AniList OAuth server 
 ## Repository Layout
 
 ```text
+migrations/
+`- <timestamp>_<name>.up.sql    # forward migrations
+`- <timestamp>_<name>.down.sql  # rollback migrations
 src/
-|- main.rs              # App entrypoint, secrets loading, Rocket setup
+|- main.rs              # App entrypoint, secrets loading, Rocket setup, migration runner
 |- routes/
 |  |- login.rs          # /login redirect to AniList OAuth
 |  |- authorized.rs     # /authorized callback and token exchange
@@ -120,10 +123,9 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 
 ### Verification notes
 
-- `cargo fmt --check` currently runs clean.
-- `cargo test -- --list` currently fails because a transitive dependency needs `protoc`.
-- `cargo test -- --list` also fails because `sqlx = 0.6` is missing a runtime feature in `Cargo.toml`.
-- On macOS, installing protobuf is typically `brew install protobuf`.
+- `cargo fmt --check` runs clean.
+- `cargo test` runs clean. DB integration tests require `DATABASE_URL` to be set pointing at a Postgres server where your user has `CREATEDB` privilege. `#[sqlx::test]` creates and drops isolated test databases automatically.
+- Secrets are managed via Doppler; run tests with `doppler run -- cargo test` when working in the configured project.
 
 ## Environment and Secrets
 
@@ -193,7 +195,7 @@ Important notes:
 - The current codebase uses Rocket logging macros such as `info!`; stay consistent unless you are intentionally migrating logging.
 - Log high-level state transitions, not sensitive payloads.
 - Keep Sentry initialization in startup code, not scattered across handlers.
-- There are currently no checked-in unit tests or integration tests; prefer inline unit tests for helpers.
+- Prefer inline unit tests for helpers; use `#[sqlx::test]` for DB repository functions (see `src/utils/functions.rs` for examples).
 - Add `tests/*.rs` integration tests only when route-level or full-flow coverage is needed.
 - For Rocket route testing, prefer Rocket's local client utilities.
 - Keep comments sparse and useful; explain why, not what.
@@ -203,12 +205,10 @@ Important notes:
 - This crate is an auth server for Annie Mei, not the main bot codebase.
 - Changes to OAuth parameters, callback behavior, or token persistence may require matching updates in `../annie-mei`.
 - The sample config files are examples only; they are not guaranteed to match runtime code perfectly.
-- `Cargo.lock` is currently gitignored in this repo.
-- There are no migrations checked into this repo, so schema changes must be coordinated carefully.
+- Migrations live in `migrations/` and run automatically on startup via `sqlx::migrate!()`. Add new migrations as versioned `.up.sql`/`.down.sql` pairs; never edit existing migration files.
 - The most reusable logic currently lives under `src/utils/`; keep additions focused instead of growing one catch-all file.
 
 ## Maintenance Notes
 
 - Update this file when build commands, test layout, or repo conventions change.
-- If you hit the known `protoc` or `sqlx` runtime blockers during verification, mention them in your handoff.
 - Follow the checked-in code over sample config files when they disagree.
