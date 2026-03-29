@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 pub struct MyState {
@@ -17,6 +17,20 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
     pub expires_in: Option<i64>,
     pub token_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TokenErrorResponse {
+    pub error: Option<String>,
+    pub message: Option<String>,
+    pub error_description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallbackResponse {
+    pub status: String,
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]

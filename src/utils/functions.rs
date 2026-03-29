@@ -1,6 +1,6 @@
 use crate::utils::{
-    consts::ANILIST_USER_BASE,
-    structs::{OAuthCredential, OAuthSession, ViewerResponse},
+    consts::{ANILIST_TOKEN, ANILIST_USER_BASE},
+    structs::{OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse, ViewerResponse},
 };
 
 use chrono::{DateTime, Utc};
@@ -51,21 +51,64 @@ pub async fn fetch_viewer_id(
     Ok(viewer_response.data.viewer.id)
 }
 
-/// Prototype-era token save; keyed on anilist_id only. Used by the existing /authorized
-/// callback and will be replaced in ANNIE-129 when the full callback is rewritten.
-#[tracing::instrument(skip(access_token, db))]
-pub async fn save_access_token(
-    access_token: &str,
-    anilist_id: i64,
-    db: &Pool<Postgres>,
-) -> Result<(), sqlx::Error> {
-    info!("Saving access token ...");
-    sqlx::query("UPDATE users SET access_token=$1 WHERE anilist_id=$2")
-        .bind(access_token)
-        .bind(anilist_id)
-        .execute(db)
+pub async fn exchange_code_for_token(
+    client: &reqwest::Client,
+    client_id: &str,
+    client_secret: &str,
+    redirect_uri: &str,
+    code: &str,
+) -> Result<TokenResponse, BadRequest<String>> {
+    let response = client
+        .post(ANILIST_TOKEN)
+        .json(&json!({
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "code": code,
+        }))
+        .send()
         .await
-        .map(|_| ())
+        .map_err(|_| BadRequest("AniList token exchange request failed".to_string()))?;
+
+    if response.status().is_success() {
+        return response
+            .json::<TokenResponse>()
+            .await
+            .map_err(|_| BadRequest("Failed to parse AniList token response".to_string()));
+    }
+
+    let status = response.status();
+    let error_payload = response
+        .json::<TokenErrorResponse>()
+        .await
+        .ok()
+        .and_then(|payload| {
+            payload
+                .error
+                .or(payload.error_description)
+                .or(payload.message)
+        })
+        .unwrap_or_else(|| "unknown_error".to_string());
+
+    let friendly_message = match error_payload.as_str() {
+        "access_denied" => "Authorization was denied by AniList",
+        "invalid_grant" => "Authorization code is invalid or expired",
+        "invalid_client" => "AniList OAuth client configuration is invalid",
+        "invalid_request" => "AniList token exchange request was invalid",
+        _ => "AniList token exchange failed",
+    };
+
+    Err(BadRequest(format!(
+        "{friendly_message} (status: {})",
+        status.as_u16()
+    )))
+}
+
+pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>> {
+    expires_in_seconds
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| Utc::now() + chrono::Duration::seconds(seconds))
 }
 
 /// Upserts AniList OAuth credentials for the given Discord user. On conflict on
@@ -243,8 +286,8 @@ pub async fn consume_oauth_session(
 mod tests {
     use super::{
         SessionConsumeError, consume_oauth_session, fetch_credential_by_anilist_id,
-        fetch_credential_by_discord_user, insert_oauth_session, upsert_oauth_credentials,
-        verify_bot_signature,
+        fetch_credential_by_discord_user, insert_oauth_session, token_expires_at,
+        upsert_oauth_credentials, verify_bot_signature,
     };
     use chrono::{Duration, Utc};
     use hmac::{Hmac, Mac};
@@ -433,5 +476,13 @@ mod tests {
             .expect_err("expired session should fail");
 
         assert!(matches!(err, SessionConsumeError::Expired));
+    }
+
+    #[test]
+    fn token_expiry_is_only_created_for_positive_values() {
+        assert!(token_expires_at(None).is_none());
+        assert!(token_expires_at(Some(0)).is_none());
+        assert!(token_expires_at(Some(-10)).is_none());
+        assert!(token_expires_at(Some(1)).is_some());
     }
 }
