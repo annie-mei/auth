@@ -211,5 +211,4 @@ Important notes:
 ## Maintenance Notes
 
 - Update this file when build commands, test layout, or repo conventions change.
-- The previous `protoc` and `sqlx` runtime feature blockers have been resolved as of ANNIE-136/ANNIE-127.
 - Follow the checked-in code over sample config files when they disagree.
