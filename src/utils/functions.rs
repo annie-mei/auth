@@ -9,6 +9,7 @@ use rocket::response::status::BadRequest;
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 
+#[tracing::instrument(skip(client, access_token))]
 pub async fn fetch_viewer_id(
     client: &reqwest::Client,
     access_token: &str,
@@ -50,6 +51,7 @@ pub async fn fetch_viewer_id(
 
 /// Prototype-era token save; keyed on anilist_id only. Used by the existing /authorized
 /// callback and will be replaced in ANNIE-129 when the full callback is rewritten.
+#[tracing::instrument(skip(access_token, db))]
 pub async fn save_access_token(
     access_token: &str,
     anilist_id: i64,
@@ -66,6 +68,7 @@ pub async fn save_access_token(
 
 /// Upserts AniList OAuth credentials for the given Discord user. On conflict on
 /// `discord_user_id`, updates all token fields and refreshes `token_updated_at`.
+#[tracing::instrument(skip(access_token, refresh_token, db))]
 pub async fn upsert_oauth_credentials(
     discord_user_id: &str,
     anilist_id: i64,
@@ -95,6 +98,7 @@ pub async fn upsert_oauth_credentials(
     .map(|_| ())
 }
 
+#[tracing::instrument(skip(db))]
 pub async fn fetch_credential_by_discord_user(
     discord_user_id: &str,
     db: &Pool<Postgres>,
@@ -109,6 +113,7 @@ pub async fn fetch_credential_by_discord_user(
     .await
 }
 
+#[tracing::instrument(skip(db))]
 pub async fn fetch_credential_by_anilist_id(
     anilist_id: i64,
     db: &Pool<Postgres>,
@@ -128,6 +133,7 @@ pub fn get_state_token() -> String {
 }
 
 /// Inserts a new OAuth session record. The session expires in 5 minutes.
+#[tracing::instrument(skip(db))]
 pub async fn insert_oauth_session(
     state: &str,
     discord_user_id: &str,
@@ -161,6 +167,7 @@ pub enum SessionConsumeError {
 ///
 /// On success the session record is consumed and cannot be replayed. On failure,
 /// the reason is diagnosed via a secondary SELECT so callers can log it.
+#[tracing::instrument(skip(db))]
 pub async fn consume_oauth_session(
     state_val: &str,
     db: &Pool<Postgres>,

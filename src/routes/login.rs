@@ -8,6 +8,7 @@ use rocket::{State, response::Redirect, response::status::BadRequest};
 use url::Url;
 
 #[get("/login?<discord_user_id>")]
+#[tracing::instrument(name = "login", skip(state))]
 pub async fn login(
     discord_user_id: &str,
     state: &State<MyState>,

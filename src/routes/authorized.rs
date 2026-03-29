@@ -9,11 +9,13 @@ use rocket::{State, response::status::BadRequest};
 use serde_json::json;
 
 #[get("/authorized?<code>")]
+#[tracing::instrument(name = "authorized", skip_all, fields(discord_user_id))]
 pub async fn authorized(
     code: String,
     state_token: StateToken,
     state: &State<MyState>,
 ) -> Result<String, BadRequest<String>> {
+    tracing::Span::current().record("discord_user_id", state_token.0.as_str());
     info!("State token validated; beginning token exchange");
 
     sentry::configure_scope(|scope| {

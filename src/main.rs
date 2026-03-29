@@ -11,6 +11,7 @@ use crate::{
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use tracing_subscriber::prelude::*;
 
 struct AppConfig {
     sentry_dsn: Option<String>,
@@ -104,6 +105,10 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
 async fn main() -> Result<()> {
     let config = AppConfig::from_env()?;
     let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
+
+    tracing_subscriber::registry()
+        .with(sentry::integrations::tracing::layer())
+        .init();
 
     if config.sentry_dsn.is_none() {
         eprintln!("SENTRY_DSN not set; Sentry is disabled");
