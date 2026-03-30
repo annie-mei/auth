@@ -11,12 +11,14 @@ use crate::{
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use tracing_subscriber::prelude::*;
 
 struct AppConfig {
     sentry_dsn: Option<String>,
     client_id: String,
     client_secret: String,
     redirect_uri: String,
+    bot_auth_secret: String,
     database_url: String,
     rocket_secret_key: String,
 }
@@ -30,6 +32,7 @@ impl AppConfig {
             client_id: required_env("ANILIST_CLIENT_ID")?,
             client_secret: required_env("ANILIST_SECRET")?,
             redirect_uri: required_env("REDIRECT_URL")?,
+            bot_auth_secret: required_env("BOT_AUTH_SECRET")?,
             database_url: required_env("DATABASE_URL")?,
             rocket_secret_key: required_env("ROCKET_SECRET_KEY")?,
         })
@@ -89,6 +92,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         client_id: config.client_id.clone(),
         client_secret: config.client_secret.clone(),
         redirect_uri: config.redirect_uri.clone(),
+        bot_auth_secret: config.bot_auth_secret.clone(),
         client,
         pool,
     };
@@ -104,6 +108,11 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
 async fn main() -> Result<()> {
     let config = AppConfig::from_env()?;
     let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
+
+    // TODO: configure Sentry traces_sample_rate to control span/transaction volume
+    tracing_subscriber::registry()
+        .with(sentry::integrations::tracing::layer())
+        .init();
 
     if config.sentry_dsn.is_none() {
         eprintln!("SENTRY_DSN not set; Sentry is disabled");

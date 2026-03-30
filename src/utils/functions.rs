@@ -1,14 +1,17 @@
 use crate::utils::{
     consts::ANILIST_USER_BASE,
-    structs::{OAuthCredential, ViewerResponse},
+    structs::{OAuthCredential, OAuthSession, ViewerResponse},
 };
 
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use nanoid::nanoid;
-use rocket::{http::CookieJar, response::status::BadRequest};
+use rocket::response::status::BadRequest;
 use serde_json::json;
+use sha2::Sha256;
 use sqlx::{Pool, Postgres};
 
+#[tracing::instrument(skip(client, access_token))]
 pub async fn fetch_viewer_id(
     client: &reqwest::Client,
     access_token: &str,
@@ -27,20 +30,30 @@ pub async fn fetch_viewer_id(
         .json(&json!({ "query": USER_QUERY }))
         .send()
         .await
-        .map_err(|e| BadRequest(format!("Failed to fetch AniList viewer: {e}")))?
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("Failed to fetch AniList viewer: {e}"))
+        })?
         .error_for_status()
-        .map_err(|e| BadRequest(format!("AniList viewer request failed: {e}")))?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("AniList viewer request failed: {e}"))
+        })?;
 
     let viewer_response = viewer_response
         .json::<ViewerResponse>()
         .await
-        .map_err(|e| BadRequest(format!("Failed to parse AniList viewer: {e}")))?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("Failed to parse AniList viewer: {e}"))
+        })?;
 
     Ok(viewer_response.data.viewer.id)
 }
 
 /// Prototype-era token save; keyed on anilist_id only. Used by the existing /authorized
 /// callback and will be replaced in ANNIE-129 when the full callback is rewritten.
+#[tracing::instrument(skip(access_token, db))]
 pub async fn save_access_token(
     access_token: &str,
     anilist_id: i64,
@@ -57,6 +70,7 @@ pub async fn save_access_token(
 
 /// Upserts AniList OAuth credentials for the given Discord user. On conflict on
 /// `discord_user_id`, updates all token fields and refreshes `token_updated_at`.
+#[tracing::instrument(skip(access_token, refresh_token, db))]
 pub async fn upsert_oauth_credentials(
     discord_user_id: &str,
     anilist_id: i64,
@@ -86,6 +100,7 @@ pub async fn upsert_oauth_credentials(
     .map(|_| ())
 }
 
+#[tracing::instrument(skip(db))]
 pub async fn fetch_credential_by_discord_user(
     discord_user_id: &str,
     db: &Pool<Postgres>,
@@ -100,6 +115,7 @@ pub async fn fetch_credential_by_discord_user(
     .await
 }
 
+#[tracing::instrument(skip(db))]
 pub async fn fetch_credential_by_anilist_id(
     anilist_id: i64,
     db: &Pool<Postgres>,
@@ -118,33 +134,169 @@ pub fn get_state_token() -> String {
     nanoid!(32)
 }
 
-pub fn is_valid_state_token(jar: &CookieJar, state: &str) -> bool {
-    let state_cookie = jar.get_private("state").or_else(|| {
-        info!("State cookie not found from get_private");
-        jar.get_pending("state")
-    });
+/// Verifies that a login request was signed by the bot using the shared secret.
+///
+/// The bot constructs `HMAC-SHA256(discord_user_id + ":" + ts, BOT_AUTH_SECRET)`
+/// and passes the hex-encoded result as `sig`. This function verifies that the
+/// signature is valid and the timestamp is within a 2-minute window.
+pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: &str) -> bool {
+    let timestamp: i64 = match ts.parse() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
 
-    if let Some(state_cookie) = state_cookie {
-        if state_cookie.value() == state {
-            jar.remove_private(("state", ""));
-            return true;
-        }
-
-        info!("State token mismatch");
-    } else {
-        info!("State cookie not found");
+    let now = Utc::now().timestamp();
+    if timestamp > now || now.saturating_sub(timestamp) > 120 {
+        return false;
     }
 
-    false
+    let sig_bytes = match hex::decode(sig) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
+    type HmacSha256 = Hmac<Sha256>;
+    let message = format!("{discord_user_id}:{ts}");
+    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(message.as_bytes());
+    mac.verify_slice(&sig_bytes).is_ok()
+}
+
+/// Inserts a new OAuth session record. The session expires in 5 minutes.
+#[tracing::instrument(skip(state, db))]
+pub async fn insert_oauth_session(
+    state: &str,
+    discord_user_id: &str,
+    db: &Pool<Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO oauth_sessions (state, discord_user_id, expires_at) \
+         VALUES ($1, $2, NOW() + INTERVAL '5 minutes')",
+    )
+    .bind(state)
+    .bind(discord_user_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// Outcome of attempting to consume an OAuth session.
+#[derive(Debug)]
+pub enum SessionConsumeError {
+    /// No session with this state exists.
+    NotFound,
+    /// The session TTL has passed.
+    Expired,
+    /// The session was already consumed (replay attempt).
+    AlreadyUsed,
+    /// A database error occurred.
+    Db(sqlx::Error),
+}
+
+/// Atomically marks the session as used and returns it, or explains why it failed.
+///
+/// On success the session record is consumed and cannot be replayed. On failure,
+/// the reason is diagnosed via a secondary SELECT so callers can log it.
+#[tracing::instrument(skip(state_val, db))]
+pub async fn consume_oauth_session(
+    state_val: &str,
+    db: &Pool<Postgres>,
+) -> Result<OAuthSession, SessionConsumeError> {
+    // Atomic consume: only succeeds if the session exists, is unused, and has not expired.
+    let session = sqlx::query_as::<_, OAuthSession>(
+        "UPDATE oauth_sessions \
+         SET used_at = NOW() \
+         WHERE state = $1 AND used_at IS NULL AND expires_at > NOW() \
+         RETURNING state, discord_user_id, expires_at, used_at, created_at",
+    )
+    .bind(state_val)
+    .fetch_optional(db)
+    .await
+    .map_err(SessionConsumeError::Db)?;
+
+    if let Some(s) = session {
+        return Ok(s);
+    }
+
+    // Diagnose why the consume failed for logging.
+    #[derive(sqlx::FromRow)]
+    struct Diag {
+        used_at: Option<DateTime<Utc>>,
+    }
+
+    let diag = sqlx::query_as::<_, Diag>("SELECT used_at FROM oauth_sessions WHERE state = $1")
+        .bind(state_val)
+        .fetch_optional(db)
+        .await
+        .map_err(SessionConsumeError::Db)?;
+
+    match diag {
+        None => Err(SessionConsumeError::NotFound),
+        Some(d) if d.used_at.is_some() => Err(SessionConsumeError::AlreadyUsed),
+        Some(_) => Err(SessionConsumeError::Expired),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        fetch_credential_by_anilist_id, fetch_credential_by_discord_user, upsert_oauth_credentials,
+        SessionConsumeError, consume_oauth_session, fetch_credential_by_anilist_id,
+        fetch_credential_by_discord_user, insert_oauth_session, upsert_oauth_credentials,
+        verify_bot_signature,
     };
     use chrono::{Duration, Utc};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
     use sqlx::{Pool, Postgres};
+
+    fn make_sig(discord_user_id: &str, ts: i64, secret: &str) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+        let msg = format!("{discord_user_id}:{ts}");
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(msg.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    #[test]
+    fn is_valid_state_token_accepts_correct_signature() {
+        let secret = "test_secret";
+        let ts = Utc::now().timestamp();
+        let sig = make_sig("user1", ts, secret);
+        assert!(verify_bot_signature("user1", &ts.to_string(), &sig, secret));
+    }
+
+    #[test]
+    fn is_valid_state_token_rejects_tampered_user() {
+        let secret = "test_secret";
+        let ts = Utc::now().timestamp();
+        let sig = make_sig("user1", ts, secret);
+        assert!(!verify_bot_signature(
+            "user2",
+            &ts.to_string(),
+            &sig,
+            secret
+        ));
+    }
+
+    #[test]
+    fn is_valid_state_token_rejects_expired_timestamp() {
+        let secret = "test_secret";
+        let ts = Utc::now().timestamp() - 400;
+        let sig = make_sig("user1", ts, secret);
+        assert!(!verify_bot_signature(
+            "user1",
+            &ts.to_string(),
+            &sig,
+            secret
+        ));
+    }
+
+    #[test]
+    fn is_valid_state_token_rejects_bad_hex() {
+        assert!(!verify_bot_signature("u", "0", "not_hex!!!", "s"));
+    }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn upsert_inserts_new_credential(pool: Pool<Postgres>) {
@@ -221,5 +373,65 @@ mod tests {
             .expect("fetch should not error");
 
         assert!(result.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn consume_session_succeeds_for_valid_state(pool: Pool<Postgres>) {
+        insert_oauth_session("state_abc", "123456789", &pool)
+            .await
+            .expect("insert should succeed");
+
+        let session = consume_oauth_session("state_abc", &pool)
+            .await
+            .expect("consume should succeed");
+
+        assert_eq!(session.discord_user_id, "123456789");
+        assert!(session.used_at.is_some());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn consume_session_fails_for_missing_state(pool: Pool<Postgres>) {
+        let err = consume_oauth_session("no_such_state", &pool)
+            .await
+            .expect_err("consume should fail");
+
+        assert!(matches!(err, SessionConsumeError::NotFound));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn consume_session_fails_on_replay(pool: Pool<Postgres>) {
+        insert_oauth_session("replayable", "111", &pool)
+            .await
+            .expect("insert should succeed");
+
+        consume_oauth_session("replayable", &pool)
+            .await
+            .expect("first consume should succeed");
+
+        let err = consume_oauth_session("replayable", &pool)
+            .await
+            .expect_err("replay should fail");
+
+        assert!(matches!(err, SessionConsumeError::AlreadyUsed));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn consume_session_fails_for_expired_state(pool: Pool<Postgres>) {
+        // Insert a session that is already past its TTL.
+        sqlx::query(
+            "INSERT INTO oauth_sessions (state, discord_user_id, expires_at) \
+             VALUES ($1, $2, NOW() - INTERVAL '1 minute')",
+        )
+        .bind("expired_state")
+        .bind("222")
+        .execute(&pool)
+        .await
+        .expect("direct insert should succeed");
+
+        let err = consume_oauth_session("expired_state", &pool)
+            .await
+            .expect_err("expired session should fail");
+
+        assert!(matches!(err, SessionConsumeError::Expired));
     }
 }
