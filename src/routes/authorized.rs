@@ -107,6 +107,7 @@ pub async fn authorized(
                 Status::BadRequest,
             ),
             UpsertOAuthCredentialsError::Db(error) => {
+                sentry::capture_error(&error);
                 error!("Failed to persist AniList credentials: {error}");
                 callback_error(
                     "persistence_failed",

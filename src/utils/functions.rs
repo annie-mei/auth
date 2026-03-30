@@ -76,13 +76,16 @@ pub async fn exchange_code_for_token(
         }))
         .send()
         .await
-        .map_err(|_| BadRequest("AniList token exchange request failed".to_string()))?;
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("AniList token exchange request failed: {e}"))
+        })?;
 
     if response.status().is_success() {
-        return response
-            .json::<TokenResponse>()
-            .await
-            .map_err(|_| BadRequest("Failed to parse AniList token response".to_string()));
+        return response.json::<TokenResponse>().await.map_err(|e| {
+            sentry::capture_error(&e);
+            BadRequest(format!("Failed to parse AniList token response: {e}"))
+        });
     }
 
     let status = response.status();
