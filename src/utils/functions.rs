@@ -1,6 +1,5 @@
-use crate::utils::{
-    consts::ANILIST_TOKEN,
-    structs::{OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse, ViewerResponse},
+use crate::utils::structs::{
+    OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse, ViewerResponse,
 };
 
 use chrono::{DateTime, Utc};
@@ -495,6 +494,8 @@ mod tests {
 
         assert_eq!(session.discord_user_id, "123456789");
         assert!(session.used_at.is_some());
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -504,6 +505,8 @@ mod tests {
             .expect_err("consume should fail");
 
         assert!(matches!(err, SessionConsumeError::NotFound));
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -521,6 +524,8 @@ mod tests {
             .expect_err("replay should fail");
 
         assert!(matches!(err, SessionConsumeError::AlreadyUsed));
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -541,6 +546,8 @@ mod tests {
             .expect_err("expired session should fail");
 
         assert!(matches!(err, SessionConsumeError::Expired));
+
+        pool.close().await;
     }
 
     #[test]
