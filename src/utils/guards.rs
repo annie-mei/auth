@@ -23,7 +23,7 @@ impl<'r> FromRequest<'r> for StateToken {
         let pool = match req.rocket().state::<MyState>() {
             Some(s) => &s.pool,
             None => {
-                error!("MyState not managed — cannot validate OAuth session");
+                error!("MyState not managed -- cannot validate OAuth session");
                 return Outcome::Error((Status::InternalServerError, StateTokenError::Invalid));
             }
         };

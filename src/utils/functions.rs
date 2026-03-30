@@ -146,7 +146,7 @@ pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: 
     };
 
     let now = Utc::now().timestamp();
-    if now - timestamp > 120 || timestamp > now {
+    if timestamp > now || now.saturating_sub(timestamp) > 120 {
         return false;
     }
 
@@ -157,8 +157,9 @@ pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: 
 
     type HmacSha256 = Hmac<Sha256>;
     let message = format!("{discord_user_id}:{ts}");
-    let mut mac =
-        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
+        return false;
+    };
     mac.update(message.as_bytes());
     mac.verify_slice(&sig_bytes).is_ok()
 }
