@@ -38,16 +38,13 @@ pub async fn authorized(
     });
 
     if let Some(error_code) = error {
+        let _ = error_description;
         let message = match error_code {
             "access_denied" => "Authorization was denied on AniList. Please try again.",
             _ => "AniList authorization failed. Please try again.",
         };
 
-        return callback_error(
-            "oauth_error",
-            error_description.unwrap_or(message),
-            Status::BadRequest,
-        );
+        return callback_error("oauth_error", message, Status::BadRequest);
     }
 
     let Some(code) = code else {
@@ -70,11 +67,7 @@ pub async fn authorized(
     {
         Ok(response) => response,
         Err(error) => {
-            return callback_error(
-                "token_exchange_failed",
-                error.0.as_str(),
-                Status::BadRequest,
-            );
+            return callback_error("token_exchange_failed", error.message(), error.status());
         }
     };
 
@@ -390,7 +383,7 @@ mod tests {
             .dispatch()
             .await;
 
-        assert_eq!(response.status(), Status::BadRequest);
+        assert_eq!(response.status(), Status::BadGateway);
         let body = response
             .into_string()
             .await
@@ -439,7 +432,7 @@ mod tests {
             .dispatch()
             .await;
 
-        assert_eq!(response.status(), Status::BadRequest);
+        assert_eq!(response.status(), Status::BadGateway);
         let body = response
             .into_string()
             .await
@@ -484,7 +477,10 @@ mod tests {
             serde_json::from_str(body.as_str()).expect("callback response should deserialize");
         assert_eq!(callback.status, "error");
         assert_eq!(callback.code, "oauth_error");
-        assert_eq!(callback.message, "Denied by user");
+        assert_eq!(
+            callback.message,
+            "Authorization was denied on AniList. Please try again."
+        );
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await

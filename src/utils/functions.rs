@@ -5,6 +5,7 @@ use crate::utils::structs::{
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use nanoid::nanoid;
+use rocket::http::Status;
 use rocket::response::status::BadRequest;
 use serde_json::json;
 use sha2::Sha256;
@@ -14,6 +15,27 @@ use sqlx::{Pool, Postgres};
 pub enum UpsertOAuthCredentialsError {
     AlreadyLinked,
     Db(sqlx::Error),
+}
+
+#[derive(Debug)]
+pub enum TokenExchangeError {
+    BadRequest(String),
+    BadGateway(String),
+}
+
+impl TokenExchangeError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::BadRequest(message) | Self::BadGateway(message) => message.as_str(),
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        match self {
+            Self::BadRequest(_) => Status::BadRequest,
+            Self::BadGateway(_) => Status::BadGateway,
+        }
+    }
 }
 
 #[tracing::instrument(skip(client, access_token))]
@@ -67,7 +89,7 @@ pub async fn exchange_code_for_token(
     client_secret: &str,
     redirect_uri: &str,
     code: &str,
-) -> Result<TokenResponse, BadRequest<String>> {
+) -> Result<TokenResponse, TokenExchangeError> {
     let response = client
         .post(token_endpoint)
         .json(&json!({
@@ -82,14 +104,18 @@ pub async fn exchange_code_for_token(
         .map_err(|e| {
             sentry::capture_error(&e);
             error!("AniList token exchange request failed: {e}");
-            BadRequest("AniList token exchange request failed. Please try again.".to_string())
+            TokenExchangeError::BadGateway(
+                "AniList token exchange request failed. Please try again.".to_string(),
+            )
         })?;
 
     if response.status().is_success() {
         return response.json::<TokenResponse>().await.map_err(|e| {
             sentry::capture_error(&e);
             error!("Failed to parse AniList token response: {e}");
-            BadRequest("Failed to parse AniList token response. Please try again.".to_string())
+            TokenExchangeError::BadGateway(
+                "Failed to parse AniList token response. Please try again.".to_string(),
+            )
         });
     }
 
@@ -127,7 +153,11 @@ pub async fn exchange_code_for_token(
         error!("{sentry_message}");
     }
 
-    Err(BadRequest(friendly_message.to_string()))
+    if status.is_server_error() {
+        Err(TokenExchangeError::BadGateway(friendly_message.to_string()))
+    } else {
+        Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
+    }
 }
 
 pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>> {
