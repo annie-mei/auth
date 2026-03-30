@@ -24,7 +24,7 @@ impl<'r> FromRequest<'r> for StateToken {
             Some(s) => &s.pool,
             None => {
                 error!("MyState not managed -- cannot validate OAuth session");
-                return Outcome::Error((Status::InternalServerError, StateTokenError::Invalid));
+                return Outcome::Error((Status::InternalServerError, StateTokenError::Internal));
             }
         };
 
@@ -49,7 +49,7 @@ impl<'r> FromRequest<'r> for StateToken {
             Err(SessionConsumeError::Db(e)) => {
                 sentry::capture_error(&e);
                 error!("Database error during state validation: {e}");
-                Outcome::Error((Status::InternalServerError, StateTokenError::Invalid))
+                Outcome::Error((Status::InternalServerError, StateTokenError::Internal))
             }
         }
     }

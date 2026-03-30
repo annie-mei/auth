@@ -106,13 +106,21 @@ pub async fn exchange_code_for_token(
         "invalid_grant" => "Authorization code is invalid or expired",
         "invalid_client" => "AniList OAuth client configuration is invalid",
         "invalid_request" => "AniList token exchange request was invalid",
+        _ if status.is_server_error() => "AniList is temporarily unavailable. Please try again.",
         _ => "AniList token exchange failed",
     };
 
-    Err(BadRequest(format!(
-        "{friendly_message} (status: {})",
-        status.as_u16()
-    )))
+    if status.is_server_error() {
+        let sentry_message = format!(
+            "AniList token exchange returned upstream status {} with payload: {}",
+            status.as_u16(),
+            error_payload
+        );
+        sentry::capture_message(&sentry_message, sentry::Level::Error);
+        error!("{sentry_message}");
+    }
+
+    Err(BadRequest(friendly_message.to_string()))
 }
 
 pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>> {

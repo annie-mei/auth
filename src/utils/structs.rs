@@ -80,6 +80,7 @@ pub enum StateTokenError {
     Invalid,
     Expired,
     Replayed,
+    Internal,
 }
 
 #[cfg(test)]

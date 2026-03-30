@@ -3,7 +3,7 @@ use crate::utils::{
         UpsertOAuthCredentialsError, exchange_code_for_token, fetch_viewer_id, token_expires_at,
         upsert_oauth_credentials,
     },
-    structs::{CallbackResponse, MyState, StateToken},
+    structs::{CallbackResponse, MyState, StateToken, StateTokenError},
 };
 
 use rocket::{
@@ -19,9 +19,14 @@ pub async fn authorized(
     code: Option<&str>,
     error: Option<&str>,
     error_description: Option<&str>,
-    state_token: StateToken,
+    state_token: Result<StateToken, StateTokenError>,
     state: &State<MyState>,
 ) -> Custom<Json<CallbackResponse>> {
+    let state_token = match state_token {
+        Ok(state_token) => state_token,
+        Err(error) => return callback_error_for_state_token(error),
+    };
+
     tracing::Span::current().record("discord_user_id", state_token.0.as_str());
     info!("State token validated; beginning token exchange");
 
@@ -142,6 +147,36 @@ fn callback_error(code: &str, message: &str, status: Status) -> Custom<Json<Call
             message: message.to_string(),
         }),
     )
+}
+
+fn callback_error_for_state_token(error: StateTokenError) -> Custom<Json<CallbackResponse>> {
+    match error {
+        StateTokenError::Missing => callback_error(
+            "missing_state",
+            "State parameter is missing from the callback.",
+            Status::BadRequest,
+        ),
+        StateTokenError::Invalid => callback_error(
+            "invalid_state",
+            "State parameter is invalid. Please restart the AniList login flow.",
+            Status::BadRequest,
+        ),
+        StateTokenError::Expired => callback_error(
+            "expired_state",
+            "State parameter has expired. Please restart the AniList login flow.",
+            Status::BadRequest,
+        ),
+        StateTokenError::Replayed => callback_error(
+            "replayed_state",
+            "This login link has already been used. Please restart the AniList login flow.",
+            Status::BadRequest,
+        ),
+        StateTokenError::Internal => callback_error(
+            "state_validation_failed",
+            "Failed to validate the AniList login state. Please retry.",
+            Status::InternalServerError,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +365,55 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_upstream_server_error_returns_user_safe_message(pool: Pool<Postgres>) {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "error": "server_error"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            format!("{}/token", mock_server.uri()),
+            format!("{}/graphql", mock_server.uri()),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let response = client
+            .get(format!("/authorized?state={state}&code=server_error_code"))
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "token_exchange_failed");
+        assert_eq!(
+            callback.message,
+            "AniList is temporarily unavailable. Please try again."
+        );
+
+        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
+            .await
+            .expect("fetch should not error");
+        assert!(persisted.is_none());
+
+        drop(client);
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
     async fn authorized_handles_access_denied_callback(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(
             pool.clone(),
@@ -362,6 +446,75 @@ mod tests {
             .await
             .expect("fetch should not error");
         assert!(persisted.is_none());
+
+        drop(client);
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_invalid_state_returns_structured_json(pool: Pool<Postgres>) {
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            "https://anilist.co/api/v2/oauth/token".to_string(),
+            "https://graphql.anilist.co".to_string(),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let response = client
+            .get("/authorized?state=invalid_state&code=auth_code_1")
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "invalid_state");
+        assert!(callback.message.contains("Please restart"));
+
+        drop(client);
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_replayed_state_returns_structured_json(pool: Pool<Postgres>) {
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            "https://anilist.co/api/v2/oauth/token".to_string(),
+            "https://graphql.anilist.co".to_string(),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let first_response = client
+            .get(format!(
+                "/authorized?state={state}&error=access_denied&error_description=Denied%20by%20user"
+            ))
+            .dispatch()
+            .await;
+        assert_eq!(first_response.status(), Status::BadRequest);
+        drop(first_response);
+
+        let replay_response = client
+            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .dispatch()
+            .await;
+
+        assert_eq!(replay_response.status(), Status::BadRequest);
+        let body = replay_response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "replayed_state");
 
         drop(client);
         pool.close().await;
