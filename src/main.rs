@@ -5,7 +5,10 @@ pub mod utils;
 
 use crate::{
     routes::{authorized::authorized, login::login},
-    utils::structs::MyState,
+    utils::{
+        consts::{ANILIST_TOKEN, ANILIST_USER_BASE},
+        structs::MyState,
+    },
 };
 
 use anyhow::{Context, Result};
@@ -93,6 +96,8 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         client_secret: config.client_secret.clone(),
         redirect_uri: config.redirect_uri.clone(),
         bot_auth_secret: config.bot_auth_secret.clone(),
+        token_endpoint: ANILIST_TOKEN.to_string(),
+        user_endpoint: ANILIST_USER_BASE.to_string(),
         client,
         pool,
     };

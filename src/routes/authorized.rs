@@ -1,6 +1,7 @@
 use crate::utils::{
     functions::{
-        exchange_code_for_token, fetch_viewer_id, token_expires_at, upsert_oauth_credentials,
+        UpsertOAuthCredentialsError, exchange_code_for_token, fetch_viewer_id, token_expires_at,
+        upsert_oauth_credentials,
     },
     structs::{CallbackResponse, MyState, StateToken},
 };
@@ -54,6 +55,7 @@ pub async fn authorized(
 
     let token_response = match exchange_code_for_token(
         &state.client,
+        state.token_endpoint.as_str(),
         state.client_id.as_str(),
         state.client_secret.as_str(),
         state.redirect_uri.as_str(),
@@ -74,7 +76,13 @@ pub async fn authorized(
     let token_expires_at = token_expires_at(token_response.expires_in);
 
     info!("Fetching User data ...");
-    let anilist_id = match fetch_viewer_id(&state.client, &token_response.access_token).await {
+    let anilist_id = match fetch_viewer_id(
+        &state.client,
+        state.user_endpoint.as_str(),
+        &token_response.access_token,
+    )
+    .await
+    {
         Ok(user_id) => user_id,
         Err(error) => {
             return callback_error("viewer_fetch_failed", error.0.as_str(), Status::BadGateway);
@@ -92,13 +100,21 @@ pub async fn authorized(
     )
     .await
     {
-        sentry::capture_error(&error);
-        error!("Failed to persist AniList credentials: {error}");
-        return callback_error(
-            "persistence_failed",
-            "Failed to save AniList credentials. Please retry.",
-            Status::InternalServerError,
-        );
+        return match error {
+            UpsertOAuthCredentialsError::AlreadyLinked => callback_error(
+                "already_linked",
+                "This AniList account is already linked to another Discord user.",
+                Status::BadRequest,
+            ),
+            UpsertOAuthCredentialsError::Db(error) => {
+                error!("Failed to persist AniList credentials: {error}");
+                callback_error(
+                    "persistence_failed",
+                    "Failed to save AniList credentials. Please retry.",
+                    Status::InternalServerError,
+                )
+            }
+        };
     }
 
     info!("Saved OAuth credentials for Discord user");
@@ -133,16 +149,35 @@ mod tests {
     use crate::{
         routes::login::login,
         utils::{
-            functions::fetch_credential_by_discord_user,
+            functions::{fetch_credential_by_discord_user, upsert_oauth_credentials},
             structs::{CallbackResponse, MyState},
         },
     };
+    use chrono::Utc;
+    use hmac::{Hmac, Mac};
     use rocket::{Config, http::Status, local::asynchronous::Client, routes};
+    use sha2::Sha256;
     use sqlx::{Pool, Postgres};
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path},
     };
+
+    const TEST_BOT_SECRET: &str = "test-bot-auth-secret-for-unit-tests";
+
+    fn sign_login(discord_user_id: &str, ts: i64) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+        let message = format!("{discord_user_id}:{ts}");
+        let mut mac = HmacSha256::new_from_slice(TEST_BOT_SECRET.as_bytes()).expect("HMAC key");
+        mac.update(message.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    fn signed_login_url(discord_user_id: &str) -> String {
+        let ts = Utc::now().timestamp();
+        let sig = sign_login(discord_user_id, ts);
+        format!("/login?discord_user_id={discord_user_id}&ts={ts}&sig={sig}")
+    }
 
     fn build_test_rocket(
         pool: Pool<Postgres>,
@@ -156,6 +191,7 @@ mod tests {
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
+            bot_auth_secret: TEST_BOT_SECRET.to_string(),
             token_endpoint,
             user_endpoint,
             client: reqwest::Client::new(),
@@ -169,7 +205,7 @@ mod tests {
 
     async fn login_and_extract_state(client: &Client) -> String {
         let response = client
-            .get("/login?discord_user_id=555666777888")
+            .get(signed_login_url("555666777888"))
             .dispatch()
             .await;
         let location = response
@@ -241,6 +277,9 @@ mod tests {
         assert_eq!(persisted.access_token, "access_1");
         assert_eq!(persisted.refresh_token.as_deref(), Some("refresh_1"));
         assert!(persisted.token_expires_at.is_some());
+
+        drop(client);
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -284,6 +323,9 @@ mod tests {
             .await
             .expect("fetch should not error");
         assert!(persisted.is_none());
+
+        drop(client);
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -319,5 +361,76 @@ mod tests {
             .await
             .expect("fetch should not error");
         assert!(persisted.is_none());
+
+        drop(client);
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_rejects_anilist_account_linked_to_another_discord_user(
+        pool: Pool<Postgres>,
+    ) {
+        upsert_oauth_credentials("existing_user", 12345, "existing_access", None, None, &pool)
+            .await
+            .expect("seed upsert should succeed");
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access_1",
+                "refresh_token": "refresh_1",
+                "expires_in": 3600,
+                "token_type": "Bearer"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "Viewer": { "id": 12345 } }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            format!("{}/token", mock_server.uri()),
+            format!("{}/graphql", mock_server.uri()),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let response = client
+            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "already_linked");
+
+        let existing = fetch_credential_by_discord_user("existing_user", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("existing credential should remain");
+        assert_eq!(existing.access_token, "existing_access");
+
+        let conflicting = fetch_credential_by_discord_user("555666777888", &pool)
+            .await
+            .expect("fetch should not error");
+        assert!(conflicting.is_none());
+
+        drop(client);
+        pool.close().await;
     }
 }

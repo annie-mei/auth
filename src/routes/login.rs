@@ -88,6 +88,8 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
             bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
+            user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
             pool,
         };
@@ -106,6 +108,8 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
             bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
+            user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
             pool,
         };
