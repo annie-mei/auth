@@ -115,7 +115,9 @@ pub async fn exchange_code_for_token(
         _ => "AniList token exchange failed",
     };
 
-    if status.is_server_error() {
+    if status.is_server_error()
+        || matches!(error_payload.as_str(), "invalid_client" | "invalid_request")
+    {
         let sentry_message = format!(
             "AniList token exchange returned upstream status {} with payload: {}",
             status.as_u16(),
