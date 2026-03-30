@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
     let config = AppConfig::from_env()?;
     let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
 
+    // TODO: configure Sentry traces_sample_rate to control span/transaction volume
     tracing_subscriber::registry()
         .with(sentry::integrations::tracing::layer())
         .init();
