@@ -38,12 +38,14 @@ pub async fn fetch_viewer_id(
         .await
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("Failed to fetch AniList viewer: {e}"))
+            error!("Failed to fetch AniList viewer: {e}");
+            BadRequest("Failed to fetch AniList viewer. Please try again.".to_string())
         })?
         .error_for_status()
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("AniList viewer request failed: {e}"))
+            error!("AniList viewer request failed: {e}");
+            BadRequest("AniList viewer request failed. Please try again.".to_string())
         })?;
 
     let viewer_response = viewer_response
@@ -51,7 +53,8 @@ pub async fn fetch_viewer_id(
         .await
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("Failed to parse AniList viewer: {e}"))
+            error!("Failed to parse AniList viewer: {e}");
+            BadRequest("Failed to parse AniList viewer response. Please try again.".to_string())
         })?;
 
     Ok(viewer_response.data.viewer.id)
@@ -78,13 +81,15 @@ pub async fn exchange_code_for_token(
         .await
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("AniList token exchange request failed: {e}"))
+            error!("AniList token exchange request failed: {e}");
+            BadRequest("AniList token exchange request failed. Please try again.".to_string())
         })?;
 
     if response.status().is_success() {
         return response.json::<TokenResponse>().await.map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("Failed to parse AniList token response: {e}"))
+            error!("Failed to parse AniList token response: {e}");
+            BadRequest("Failed to parse AniList token response. Please try again.".to_string())
         });
     }
 
