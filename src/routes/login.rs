@@ -88,6 +88,8 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
             bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
+            user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
             pool,
         };
@@ -106,6 +108,8 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
             bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
+            user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
             pool,
         };
@@ -117,7 +121,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn login_redirects_to_anilist(pool: Pool<Postgres>) {
-        let client = Client::tracked(build_test_rocket(pool))
+        let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
         let response = client.get(signed_login_url("123456789")).dispatch().await;
@@ -128,11 +132,15 @@ mod tests {
             .get_one("location")
             .expect("login should redirect");
         assert!(location.contains("anilist.co"));
+
+        drop(response);
+        drop(client);
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn login_rejects_invalid_signature(pool: Pool<Postgres>) {
-        let client = Client::tracked(build_test_rocket(pool))
+        let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
         let ts = Utc::now().timestamp();
@@ -144,11 +152,15 @@ mod tests {
             .await;
 
         assert_eq!(response.status(), Status::BadRequest);
+
+        drop(response);
+        drop(client);
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn login_does_not_set_cookies(pool: Pool<Postgres>) {
-        let client = Client::tracked(build_test_rocket(pool))
+        let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
         let response = client.get(signed_login_url("123456789")).dispatch().await;
@@ -157,11 +169,15 @@ mod tests {
             response.headers().get_one("set-cookie").is_none(),
             "login should not set any cookies"
         );
+
+        drop(response);
+        drop(client);
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn state_session_is_single_use(pool: Pool<Postgres>) {
-        let client = Client::tracked(build_test_rocket_with_consume(pool))
+        let client = Client::tracked(build_test_rocket_with_consume(pool.clone()))
             .await
             .expect("rocket client should build");
 
@@ -176,6 +192,7 @@ mod tests {
             .find(|(key, _)| key == "state")
             .map(|(_, value)| value.into_owned())
             .expect("redirect URL should include state param");
+        drop(response);
 
         let first = client
             .get(format!("/consume?state={state}"))
@@ -188,6 +205,11 @@ mod tests {
             .dispatch()
             .await;
         assert_eq!(replay.status(), Status::BadRequest);
+
+        drop(first);
+        drop(replay);
+        drop(client);
+        pool.close().await;
     }
 
     #[test]

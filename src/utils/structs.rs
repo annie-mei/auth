@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 pub struct MyState {
@@ -7,6 +7,8 @@ pub struct MyState {
     pub client_secret: String,
     pub redirect_uri: String,
     pub bot_auth_secret: String,
+    pub token_endpoint: String,
+    pub user_endpoint: String,
     pub client: reqwest::Client,
     pub pool: PgPool,
 }
@@ -17,6 +19,20 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
     pub expires_in: Option<i64>,
     pub token_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TokenErrorResponse {
+    pub error: Option<String>,
+    pub message: Option<String>,
+    pub error_description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallbackResponse {
+    pub status: String,
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -64,6 +80,7 @@ pub enum StateTokenError {
     Invalid,
     Expired,
     Replayed,
+    Internal,
 }
 
 #[cfg(test)]

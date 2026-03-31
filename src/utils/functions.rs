@@ -1,21 +1,67 @@
-use crate::utils::{
-    consts::ANILIST_USER_BASE,
-    structs::{OAuthCredential, OAuthSession, ViewerResponse},
+use crate::utils::structs::{
+    OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse, ViewerResponse,
 };
 
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use nanoid::nanoid;
-use rocket::response::status::BadRequest;
+use rocket::http::Status;
 use serde_json::json;
 use sha2::Sha256;
 use sqlx::{Pool, Postgres};
 
+#[derive(Debug)]
+pub enum UpsertOAuthCredentialsError {
+    AlreadyLinked,
+    Db(sqlx::Error),
+}
+
+#[derive(Debug)]
+pub enum TokenExchangeError {
+    BadRequest(String),
+    BadGateway(String),
+}
+
+impl TokenExchangeError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::BadRequest(message) | Self::BadGateway(message) => message.as_str(),
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        match self {
+            Self::BadRequest(_) => Status::BadRequest,
+            Self::BadGateway(_) => Status::BadGateway,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ViewerFetchError {
+    BadGateway(String),
+}
+
+impl ViewerFetchError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::BadGateway(message) => message.as_str(),
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        match self {
+            Self::BadGateway(_) => Status::BadGateway,
+        }
+    }
+}
+
 #[tracing::instrument(skip(client, access_token))]
 pub async fn fetch_viewer_id(
     client: &reqwest::Client,
+    user_endpoint: &str,
     access_token: &str,
-) -> Result<i64, BadRequest<String>> {
+) -> Result<i64, ViewerFetchError> {
     const USER_QUERY: &str = "
     query {
         Viewer {
@@ -25,19 +71,25 @@ pub async fn fetch_viewer_id(
     ";
 
     let viewer_response = client
-        .post(ANILIST_USER_BASE)
+        .post(user_endpoint)
         .bearer_auth(access_token)
         .json(&json!({ "query": USER_QUERY }))
         .send()
         .await
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("Failed to fetch AniList viewer: {e}"))
+            error!("Failed to fetch AniList viewer: {e}");
+            ViewerFetchError::BadGateway(
+                "Failed to fetch AniList viewer. Please try again.".to_string(),
+            )
         })?
         .error_for_status()
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("AniList viewer request failed: {e}"))
+            error!("AniList viewer request failed: {e}");
+            ViewerFetchError::BadGateway(
+                "AniList viewer request failed. Please try again.".to_string(),
+            )
         })?;
 
     let viewer_response = viewer_response
@@ -45,27 +97,99 @@ pub async fn fetch_viewer_id(
         .await
         .map_err(|e| {
             sentry::capture_error(&e);
-            BadRequest(format!("Failed to parse AniList viewer: {e}"))
+            error!("Failed to parse AniList viewer: {e}");
+            ViewerFetchError::BadGateway(
+                "Failed to parse AniList viewer response. Please try again.".to_string(),
+            )
         })?;
 
     Ok(viewer_response.data.viewer.id)
 }
 
-/// Prototype-era token save; keyed on anilist_id only. Used by the existing /authorized
-/// callback and will be replaced in ANNIE-129 when the full callback is rewritten.
-#[tracing::instrument(skip(access_token, db))]
-pub async fn save_access_token(
-    access_token: &str,
-    anilist_id: i64,
-    db: &Pool<Postgres>,
-) -> Result<(), sqlx::Error> {
-    info!("Saving access token ...");
-    sqlx::query("UPDATE users SET access_token=$1 WHERE anilist_id=$2")
-        .bind(access_token)
-        .bind(anilist_id)
-        .execute(db)
+#[tracing::instrument(skip(client, client_secret, code))]
+pub async fn exchange_code_for_token(
+    client: &reqwest::Client,
+    token_endpoint: &str,
+    client_id: &str,
+    client_secret: &str,
+    redirect_uri: &str,
+    code: &str,
+) -> Result<TokenResponse, TokenExchangeError> {
+    let response = client
+        .post(token_endpoint)
+        .json(&json!({
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "code": code,
+        }))
+        .send()
         .await
-        .map(|_| ())
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            error!("AniList token exchange request failed: {e}");
+            TokenExchangeError::BadGateway(
+                "AniList token exchange request failed. Please try again.".to_string(),
+            )
+        })?;
+
+    if response.status().is_success() {
+        return response.json::<TokenResponse>().await.map_err(|e| {
+            sentry::capture_error(&e);
+            error!("Failed to parse AniList token response: {e}");
+            TokenExchangeError::BadGateway(
+                "Failed to parse AniList token response. Please try again.".to_string(),
+            )
+        });
+    }
+
+    let status = response.status();
+    let error_payload = response
+        .json::<TokenErrorResponse>()
+        .await
+        .ok()
+        .and_then(|payload| {
+            payload
+                .error
+                .or(payload.error_description)
+                .or(payload.message)
+        })
+        .unwrap_or_else(|| "unknown_error".to_string());
+
+    let friendly_message = match error_payload.as_str() {
+        "access_denied" => "Authorization was denied by AniList",
+        "invalid_grant" => "Authorization code is invalid or expired",
+        "invalid_client" => "AniList OAuth client configuration is invalid",
+        "invalid_request" => "AniList token exchange request was invalid",
+        _ if status.is_server_error() => "AniList is temporarily unavailable. Please try again.",
+        _ => "AniList token exchange failed",
+    };
+
+    let is_upstream_failure = status.is_server_error()
+        || matches!(error_payload.as_str(), "invalid_client" | "invalid_request");
+
+    if is_upstream_failure {
+        let sentry_message = format!(
+            "AniList token exchange returned upstream status {} with payload: {}",
+            status.as_u16(),
+            error_payload
+        );
+        sentry::capture_message(&sentry_message, sentry::Level::Error);
+        error!("{sentry_message}");
+    }
+
+    if is_upstream_failure {
+        Err(TokenExchangeError::BadGateway(friendly_message.to_string()))
+    } else {
+        Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
+    }
+}
+
+pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>> {
+    expires_in_seconds
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| Utc::now() + chrono::Duration::seconds(seconds))
 }
 
 /// Upserts AniList OAuth credentials for the given Discord user. On conflict on
@@ -78,7 +202,15 @@ pub async fn upsert_oauth_credentials(
     refresh_token: Option<&str>,
     token_expires_at: Option<DateTime<Utc>>,
     db: &Pool<Postgres>,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), UpsertOAuthCredentialsError> {
+    if let Some(existing) = fetch_credential_by_anilist_id(anilist_id, db)
+        .await
+        .map_err(UpsertOAuthCredentialsError::Db)?
+        && existing.discord_user_id != discord_user_id
+    {
+        return Err(UpsertOAuthCredentialsError::AlreadyLinked);
+    }
+
     sqlx::query(
         "INSERT INTO oauth_credentials \
          (discord_user_id, anilist_id, access_token, refresh_token, token_expires_at, token_updated_at) \
@@ -97,7 +229,23 @@ pub async fn upsert_oauth_credentials(
     .bind(token_expires_at)
     .execute(db)
     .await
+    .map_err(|error| {
+        if is_anilist_id_conflict(&error) {
+            UpsertOAuthCredentialsError::AlreadyLinked
+        } else {
+            UpsertOAuthCredentialsError::Db(error)
+        }
+    })
     .map(|_| ())
+}
+
+fn is_anilist_id_conflict(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(database_error) => {
+            database_error.constraint() == Some("uq_oauth_credentials_anilist_id")
+        }
+        _ => false,
+    }
 }
 
 #[tracing::instrument(skip(db))]
@@ -242,9 +390,9 @@ pub async fn consume_oauth_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionConsumeError, consume_oauth_session, fetch_credential_by_anilist_id,
-        fetch_credential_by_discord_user, insert_oauth_session, upsert_oauth_credentials,
-        verify_bot_signature,
+        SessionConsumeError, UpsertOAuthCredentialsError, consume_oauth_session,
+        fetch_credential_by_anilist_id, fetch_credential_by_discord_user, insert_oauth_session,
+        token_expires_at, upsert_oauth_credentials, verify_bot_signature,
     };
     use chrono::{Duration, Utc};
     use hmac::{Hmac, Mac};
@@ -321,6 +469,8 @@ mod tests {
         assert_eq!(cred.access_token, "access_tok");
         assert_eq!(cred.refresh_token.as_deref(), Some("refresh_tok"));
         assert!(cred.token_expires_at.is_some());
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -340,6 +490,8 @@ mod tests {
 
         assert_eq!(cred.access_token, "new_token");
         assert_eq!(cred.refresh_token.as_deref(), Some("new_refresh"));
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -349,6 +501,8 @@ mod tests {
             .expect("fetch should not error");
 
         assert!(result.is_none());
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -364,6 +518,8 @@ mod tests {
 
         assert_eq!(cred.discord_user_id, "user_a");
         assert_eq!(cred.anilist_id, 42);
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -373,6 +529,31 @@ mod tests {
             .expect("fetch should not error");
 
         assert!(result.is_none());
+
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn upsert_rejects_anilist_id_linked_to_another_discord_user(pool: Pool<Postgres>) {
+        upsert_oauth_credentials("user_a", 42, "tok_a", None, None, &pool)
+            .await
+            .expect("initial upsert should succeed");
+
+        let error = upsert_oauth_credentials("user_b", 42, "tok_b", None, None, &pool)
+            .await
+            .expect_err("conflicting upsert should fail");
+
+        assert!(matches!(error, UpsertOAuthCredentialsError::AlreadyLinked));
+
+        let credential = fetch_credential_by_anilist_id(42, &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should still exist");
+
+        assert_eq!(credential.discord_user_id, "user_a");
+        assert_eq!(credential.access_token, "tok_a");
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -387,6 +568,8 @@ mod tests {
 
         assert_eq!(session.discord_user_id, "123456789");
         assert!(session.used_at.is_some());
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -396,6 +579,8 @@ mod tests {
             .expect_err("consume should fail");
 
         assert!(matches!(err, SessionConsumeError::NotFound));
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -413,6 +598,8 @@ mod tests {
             .expect_err("replay should fail");
 
         assert!(matches!(err, SessionConsumeError::AlreadyUsed));
+
+        pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -433,5 +620,15 @@ mod tests {
             .expect_err("expired session should fail");
 
         assert!(matches!(err, SessionConsumeError::Expired));
+
+        pool.close().await;
+    }
+
+    #[test]
+    fn token_expiry_is_only_created_for_positive_values() {
+        assert!(token_expires_at(None).is_none());
+        assert!(token_expires_at(Some(0)).is_none());
+        assert!(token_expires_at(Some(-10)).is_none());
+        assert!(token_expires_at(Some(1)).is_some());
     }
 }
