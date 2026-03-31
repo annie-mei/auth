@@ -153,7 +153,9 @@ pub async fn exchange_code_for_token(
         error!("{sentry_message}");
     }
 
-    if status.is_server_error() {
+    if status.is_server_error()
+        || matches!(error_payload.as_str(), "invalid_client" | "invalid_request")
+    {
         Err(TokenExchangeError::BadGateway(friendly_message.to_string()))
     } else {
         Err(TokenExchangeError::BadRequest(friendly_message.to_string()))

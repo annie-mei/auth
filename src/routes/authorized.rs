@@ -358,6 +358,55 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    async fn authorized_invalid_client_returns_bad_gateway(pool: Pool<Postgres>) {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": "invalid_client"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = Client::tracked(build_test_rocket(
+            pool.clone(),
+            format!("{}/token", mock_server.uri()),
+            format!("{}/graphql", mock_server.uri()),
+        ))
+        .await
+        .expect("rocket client should build");
+
+        let state = login_and_extract_state(&client).await;
+        let response = client
+            .get(format!("/authorized?state={state}&code=bad_client"))
+            .dispatch()
+            .await;
+
+        assert_eq!(response.status(), Status::BadGateway);
+        let body = response
+            .into_string()
+            .await
+            .expect("response should contain JSON");
+        let callback: CallbackResponse =
+            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
+        assert_eq!(callback.status, "error");
+        assert_eq!(callback.code, "token_exchange_failed");
+        assert_eq!(
+            callback.message,
+            "AniList OAuth client configuration is invalid"
+        );
+
+        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
+            .await
+            .expect("fetch should not error");
+        assert!(persisted.is_none());
+
+        drop(client);
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
     async fn authorized_upstream_server_error_returns_user_safe_message(pool: Pool<Postgres>) {
         let mock_server = MockServer::start().await;
 
