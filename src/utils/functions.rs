@@ -166,9 +166,10 @@ pub async fn exchange_code_for_token(
         _ => "AniList token exchange failed",
     };
 
-    if status.is_server_error()
-        || matches!(error_payload.as_str(), "invalid_client" | "invalid_request")
-    {
+    let is_upstream_failure = status.is_server_error()
+        || matches!(error_payload.as_str(), "invalid_client" | "invalid_request");
+
+    if is_upstream_failure {
         let sentry_message = format!(
             "AniList token exchange returned upstream status {} with payload: {}",
             status.as_u16(),
@@ -178,9 +179,7 @@ pub async fn exchange_code_for_token(
         error!("{sentry_message}");
     }
 
-    if status.is_server_error()
-        || matches!(error_payload.as_str(), "invalid_client" | "invalid_request")
-    {
+    if is_upstream_failure {
         Err(TokenExchangeError::BadGateway(friendly_message.to_string()))
     } else {
         Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
