@@ -38,7 +38,10 @@ pub async fn authorized(
     });
 
     if let Some(error_code) = error {
-        let _ = error_description;
+        info!(
+            "AniList callback returned an OAuth error: {error_code} ({})",
+            error_description.unwrap_or("<missing>")
+        );
         let message = match error_code {
             "access_denied" => "Authorization was denied on AniList. Please try again.",
             _ => "AniList authorization failed. Please try again.",
@@ -83,7 +86,7 @@ pub async fn authorized(
     {
         Ok(user_id) => user_id,
         Err(error) => {
-            return callback_error("viewer_fetch_failed", error.0.as_str(), Status::BadGateway);
+            return callback_error("viewer_fetch_failed", error.message(), error.status());
         }
     };
     info!("User data fetched successfully");
@@ -106,7 +109,7 @@ pub async fn authorized(
             ),
             UpsertOAuthCredentialsError::Db(error) => {
                 sentry::capture_error(&error);
-                error!("Failed to persist AniList credentials: {error}");
+                error!("Failed to persist AniList credentials");
                 callback_error(
                     "persistence_failed",
                     "Failed to save AniList credentials. Please retry.",

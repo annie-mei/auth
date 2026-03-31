@@ -6,7 +6,6 @@ use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use nanoid::nanoid;
 use rocket::http::Status;
-use rocket::response::status::BadRequest;
 use serde_json::json;
 use sha2::Sha256;
 use sqlx::{Pool, Postgres};
@@ -38,12 +37,31 @@ impl TokenExchangeError {
     }
 }
 
+#[derive(Debug)]
+pub enum ViewerFetchError {
+    BadGateway(String),
+}
+
+impl ViewerFetchError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::BadGateway(message) => message.as_str(),
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        match self {
+            Self::BadGateway(_) => Status::BadGateway,
+        }
+    }
+}
+
 #[tracing::instrument(skip(client, access_token))]
 pub async fn fetch_viewer_id(
     client: &reqwest::Client,
     user_endpoint: &str,
     access_token: &str,
-) -> Result<i64, BadRequest<String>> {
+) -> Result<i64, ViewerFetchError> {
     const USER_QUERY: &str = "
     query {
         Viewer {
@@ -61,13 +79,17 @@ pub async fn fetch_viewer_id(
         .map_err(|e| {
             sentry::capture_error(&e);
             error!("Failed to fetch AniList viewer: {e}");
-            BadRequest("Failed to fetch AniList viewer. Please try again.".to_string())
+            ViewerFetchError::BadGateway(
+                "Failed to fetch AniList viewer. Please try again.".to_string(),
+            )
         })?
         .error_for_status()
         .map_err(|e| {
             sentry::capture_error(&e);
             error!("AniList viewer request failed: {e}");
-            BadRequest("AniList viewer request failed. Please try again.".to_string())
+            ViewerFetchError::BadGateway(
+                "AniList viewer request failed. Please try again.".to_string(),
+            )
         })?;
 
     let viewer_response = viewer_response
@@ -76,12 +98,15 @@ pub async fn fetch_viewer_id(
         .map_err(|e| {
             sentry::capture_error(&e);
             error!("Failed to parse AniList viewer: {e}");
-            BadRequest("Failed to parse AniList viewer response. Please try again.".to_string())
+            ViewerFetchError::BadGateway(
+                "Failed to parse AniList viewer response. Please try again.".to_string(),
+            )
         })?;
 
     Ok(viewer_response.data.viewer.id)
 }
 
+#[tracing::instrument(skip(client, client_secret, code))]
 pub async fn exchange_code_for_token(
     client: &reqwest::Client,
     token_endpoint: &str,
