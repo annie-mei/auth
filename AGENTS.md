@@ -133,15 +133,17 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 
 - `SENTRY_DSN`
 - `ANILIST_CLIENT_ID`
-- `ANILIST_SECRET`
-- `REDIRECT_URL`
+- `ANILIST_CLIENT_SECRET`
+- `ANILIST_REDIRECT_URI`
+- `OAUTH_CONTEXT_SIGNING_SECRET`
+- `OAUTH_CONTEXT_TTL_SECONDS`
+- `OAUTH_STATE_TTL_SECONDS`
 - `DATABASE_URL`
 - `ROCKET_SECRET_KEY`
-- `BOT_AUTH_SECRET`
 
 Important notes:
 
-- The checked-in sample secrets files previously used `SECRET`, and runtime now reads `ROCKET_SECRET_KEY`.
+- The checked-in sample secrets files should track the canonical OAuth env names above.
 - Treat runtime code as the source of truth unless you are intentionally fixing that mismatch.
 - Never commit real `Secrets.toml`, `Secrets.dev.toml`, or `Rocket.toml` files.
 - Never log OAuth tokens, client secrets, DSNs, or raw database URLs.
