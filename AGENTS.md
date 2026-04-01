@@ -18,8 +18,8 @@ migrations/
 src/
 |- main.rs              # App entrypoint, secrets loading, Rocket setup, migration runner
 |- routes/
-|  |- login.rs          # /login redirect to AniList OAuth
-|  |- authorized.rs     # /authorized callback and token exchange
+|  |- start.rs          # /oauth/anilist/start redirect to AniList OAuth
+|  |- authorized.rs     # /oauth/anilist/callback token exchange
 |  `- mod.rs
 `- utils/
    |- consts.rs         # AniList endpoint constants
