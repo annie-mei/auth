@@ -17,7 +17,7 @@ Auth server for AniList OAuth for Annie Mei.
 - `ANILIST_REDIRECT_URI`
 - `OAUTH_CONTEXT_SIGNING_SECRET`
 - `OAUTH_CONTEXT_TTL_SECONDS` (optional, defaults to `300`)
-- `OAUTH_STATE_TTL_SECONDS` (optional, defaults to `600`)
+- `OAUTH_STATE_TTL_SECONDS` (optional, defaults to `300`)
 - `DATABASE_URL`
 - `ROCKET_SECRET_KEY`
 - `SENTRY_DSN` (optional)

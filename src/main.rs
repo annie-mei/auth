@@ -17,7 +17,7 @@ use std::env;
 use tracing_subscriber::prelude::*;
 
 const DEFAULT_CONTEXT_TTL_SECONDS: i64 = 300;
-const DEFAULT_STATE_TTL_SECONDS: i64 = 600;
+const DEFAULT_STATE_TTL_SECONDS: i64 = 300;
 
 struct AppConfig {
     sentry_dsn: Option<String>,
