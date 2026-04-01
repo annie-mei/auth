@@ -4,7 +4,7 @@ pub mod routes;
 pub mod utils;
 
 use crate::{
-    routes::{authorized::authorized, login::login},
+    routes::{authorized::authorized, start::start},
     utils::{
         consts::{ANILIST_TOKEN, ANILIST_USER_BASE},
         structs::MyState,
@@ -16,12 +16,17 @@ use sqlx::postgres::PgPoolOptions;
 use std::env;
 use tracing_subscriber::prelude::*;
 
+const DEFAULT_CONTEXT_TTL_SECONDS: i64 = 300;
+const DEFAULT_STATE_TTL_SECONDS: i64 = 600;
+
 struct AppConfig {
     sentry_dsn: Option<String>,
     client_id: String,
     client_secret: String,
     redirect_uri: String,
-    bot_auth_secret: String,
+    context_signing_secret: String,
+    context_ttl_seconds: i64,
+    state_ttl_seconds: i64,
     database_url: String,
     rocket_secret_key: String,
 }
@@ -33,9 +38,13 @@ impl AppConfig {
         Ok(Self {
             sentry_dsn: optional_env("SENTRY_DSN"),
             client_id: required_env("ANILIST_CLIENT_ID")?,
-            client_secret: required_env("ANILIST_SECRET")?,
-            redirect_uri: required_env("REDIRECT_URL")?,
-            bot_auth_secret: required_env("BOT_AUTH_SECRET")?,
+            client_secret: required_env("ANILIST_CLIENT_SECRET")?,
+            redirect_uri: required_env("ANILIST_REDIRECT_URI")?,
+            context_signing_secret: required_env("OAUTH_CONTEXT_SIGNING_SECRET")?,
+            context_ttl_seconds: optional_positive_i64_env("OAUTH_CONTEXT_TTL_SECONDS")?
+                .unwrap_or(DEFAULT_CONTEXT_TTL_SECONDS),
+            state_ttl_seconds: optional_positive_i64_env("OAUTH_STATE_TTL_SECONDS")?
+                .unwrap_or(DEFAULT_STATE_TTL_SECONDS),
             database_url: required_env("DATABASE_URL")?,
             rocket_secret_key: required_env("ROCKET_SECRET_KEY")?,
         })
@@ -58,6 +67,21 @@ fn required_env(key: &str) -> Result<String> {
     let value = env::var(key).with_context(|| format!("{key} was not found"))?;
 
     non_empty_env_value(value).with_context(|| format!("{key} was empty"))
+}
+
+fn optional_positive_i64_env(key: &str) -> Result<Option<i64>> {
+    let Some(value) = optional_env(key) else {
+        return Ok(None);
+    };
+
+    let parsed = value
+        .parse::<i64>()
+        .with_context(|| format!("{key} must be a positive integer"))?;
+
+    (parsed > 0)
+        .then_some(parsed)
+        .with_context(|| format!("{key} must be a positive integer"))
+        .map(Some)
 }
 
 fn init_sentry(dsn: &str) -> sentry::ClientInitGuard {
@@ -95,7 +119,9 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         client_id: config.client_id.clone(),
         client_secret: config.client_secret.clone(),
         redirect_uri: config.redirect_uri.clone(),
-        bot_auth_secret: config.bot_auth_secret.clone(),
+        context_signing_secret: config.context_signing_secret.clone(),
+        context_ttl_seconds: config.context_ttl_seconds,
+        state_ttl_seconds: config.state_ttl_seconds,
         token_endpoint: ANILIST_TOKEN.to_string(),
         user_endpoint: ANILIST_USER_BASE.to_string(),
         client,
@@ -105,7 +131,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
     let figment = rocket::Config::figment().merge(("secret_key", config.rocket_secret_key.clone()));
 
     Ok(rocket::custom(figment)
-        .mount("/", routes![login, authorized])
+        .mount("/", routes![start, authorized])
         .manage(state))
 }
 
@@ -114,7 +140,6 @@ async fn main() -> Result<()> {
     let config = AppConfig::from_env()?;
     let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
 
-    // TODO: configure Sentry traces_sample_rate to control span/transaction volume
     tracing_subscriber::registry()
         .with(sentry::integrations::tracing::layer())
         .init();
@@ -130,7 +155,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{non_empty_env_value, required_env};
+    use super::{non_empty_env_value, optional_positive_i64_env, required_env};
     use std::env;
 
     #[test]
@@ -154,6 +179,17 @@ mod tests {
         unsafe { env::set_var(key, "value") };
         let value = required_env(key).expect("non-empty env vars should pass validation");
         assert_eq!(value, "value");
+
+        unsafe { env::remove_var(key) };
+    }
+
+    #[test]
+    fn optional_positive_i64_env_rejects_zero() {
+        let key = "ANNIE_MEI_AUTH_OPTIONAL_INT_TEST";
+
+        unsafe { env::set_var(key, "0") };
+        let error = optional_positive_i64_env(key).expect_err("zero should fail validation");
+        assert!(error.to_string().contains("positive integer"));
 
         unsafe { env::remove_var(key) };
     }

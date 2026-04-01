@@ -1,7 +1,9 @@
 use crate::utils::structs::{
-    OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse, ViewerResponse,
+    OAuthContextPayload, OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse,
+    ViewerResponse,
 };
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use nanoid::nanoid;
@@ -9,6 +11,9 @@ use rocket::http::Status;
 use serde_json::json;
 use sha2::Sha256;
 use sqlx::{Pool, Postgres};
+
+const CONTEXT_VERSION: u8 = 1;
+const MAX_CONTEXT_FUTURE_SKEW_SECONDS: i64 = 60;
 
 #[derive(Debug)]
 pub enum UpsertOAuthCredentialsError {
@@ -54,6 +59,16 @@ impl ViewerFetchError {
             Self::BadGateway(_) => Status::BadGateway,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum OAuthContextError {
+    Malformed,
+    InvalidSignature,
+    UnsupportedVersion,
+    MissingNonce,
+    Expired,
+    InvalidIssuedAt,
 }
 
 #[tracing::instrument(skip(client, access_token))]
@@ -192,8 +207,6 @@ pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>
         .map(|seconds| Utc::now() + chrono::Duration::seconds(seconds))
 }
 
-/// Upserts AniList OAuth credentials for the given Discord user. On conflict on
-/// `discord_user_id`, updates all token fields and refreshes `token_updated_at`.
 #[tracing::instrument(skip(access_token, refresh_token, db))]
 pub async fn upsert_oauth_credentials(
     discord_user_id: &str,
@@ -282,77 +295,85 @@ pub fn get_state_token() -> String {
     nanoid!(32)
 }
 
-/// Verifies that a login request was signed by the bot using the shared secret.
-///
-/// The bot constructs `HMAC-SHA256(discord_user_id + ":" + ts, BOT_AUTH_SECRET)`
-/// and passes the hex-encoded result as `sig`. This function verifies that the
-/// signature is valid and the timestamp is within a 2-minute window.
-pub fn verify_bot_signature(discord_user_id: &str, ts: &str, sig: &str, secret: &str) -> bool {
-    let timestamp: i64 = match ts.parse() {
-        Ok(t) => t,
-        Err(_) => return false,
-    };
-
-    let now = Utc::now().timestamp();
-    if timestamp > now || now.saturating_sub(timestamp) > 120 {
-        return false;
-    }
-
-    let sig_bytes = match hex::decode(sig) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
+pub fn verify_oauth_context(
+    ctx: &str,
+    secret: &str,
+    max_ttl_seconds: i64,
+) -> Result<OAuthContextPayload, OAuthContextError> {
+    let (payload_segment, signature_segment) =
+        ctx.split_once('.').ok_or(OAuthContextError::Malformed)?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature_segment)
+        .map_err(|_| OAuthContextError::Malformed)?;
 
     type HmacSha256 = Hmac<Sha256>;
-    let message = format!("{discord_user_id}:{ts}");
-    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
-        return false;
-    };
-    mac.update(message.as_bytes());
-    mac.verify_slice(&sig_bytes).is_ok()
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|_| OAuthContextError::InvalidSignature)?;
+    mac.update(payload_segment.as_bytes());
+    mac.verify_slice(&signature)
+        .map_err(|_| OAuthContextError::InvalidSignature)?;
+
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|_| OAuthContextError::Malformed)?;
+    let payload: OAuthContextPayload =
+        serde_json::from_slice(&payload_bytes).map_err(|_| OAuthContextError::Malformed)?;
+
+    if payload.v != CONTEXT_VERSION {
+        return Err(OAuthContextError::UnsupportedVersion);
+    }
+
+    if payload.nonce.trim().is_empty() {
+        return Err(OAuthContextError::MissingNonce);
+    }
+
+    let now = Utc::now().timestamp();
+    if payload.exp <= now {
+        return Err(OAuthContextError::Expired);
+    }
+
+    if payload.iat > now + MAX_CONTEXT_FUTURE_SKEW_SECONDS
+        || payload.exp < payload.iat
+        || payload.exp.saturating_sub(payload.iat) > max_ttl_seconds
+    {
+        return Err(OAuthContextError::InvalidIssuedAt);
+    }
+
+    Ok(payload)
 }
 
-/// Inserts a new OAuth session record. The session expires in 5 minutes.
 #[tracing::instrument(skip(state, db))]
 pub async fn insert_oauth_session(
     state: &str,
     discord_user_id: &str,
+    ttl_seconds: i64,
     db: &Pool<Postgres>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO oauth_sessions (state, discord_user_id, expires_at) \
-         VALUES ($1, $2, NOW() + INTERVAL '5 minutes')",
+         VALUES ($1, $2, NOW() + ($3 * INTERVAL '1 second'))",
     )
     .bind(state)
     .bind(discord_user_id)
+    .bind(ttl_seconds)
     .execute(db)
     .await
     .map(|_| ())
 }
 
-/// Outcome of attempting to consume an OAuth session.
 #[derive(Debug)]
 pub enum SessionConsumeError {
-    /// No session with this state exists.
     NotFound,
-    /// The session TTL has passed.
     Expired,
-    /// The session was already consumed (replay attempt).
     AlreadyUsed,
-    /// A database error occurred.
     Db(sqlx::Error),
 }
 
-/// Atomically marks the session as used and returns it, or explains why it failed.
-///
-/// On success the session record is consumed and cannot be replayed. On failure,
-/// the reason is diagnosed via a secondary SELECT so callers can log it.
 #[tracing::instrument(skip(state_val, db))]
 pub async fn consume_oauth_session(
     state_val: &str,
     db: &Pool<Postgres>,
 ) -> Result<OAuthSession, SessionConsumeError> {
-    // Atomic consume: only succeeds if the session exists, is unused, and has not expired.
     let session = sqlx::query_as::<_, OAuthSession>(
         "UPDATE oauth_sessions \
          SET used_at = NOW() \
@@ -368,7 +389,6 @@ pub async fn consume_oauth_session(
         return Ok(s);
     }
 
-    // Diagnose why the consume failed for logging.
     #[derive(sqlx::FromRow)]
     struct Diag {
         used_at: Option<DateTime<Utc>>,
@@ -390,60 +410,86 @@ pub async fn consume_oauth_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionConsumeError, UpsertOAuthCredentialsError, consume_oauth_session,
+        OAuthContextError, SessionConsumeError, UpsertOAuthCredentialsError, consume_oauth_session,
         fetch_credential_by_anilist_id, fetch_credential_by_discord_user, insert_oauth_session,
-        token_expires_at, upsert_oauth_credentials, verify_bot_signature,
+        token_expires_at, upsert_oauth_credentials, verify_oauth_context,
     };
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::{Duration, Utc};
     use hmac::{Hmac, Mac};
+    use serde_json::json;
     use sha2::Sha256;
     use sqlx::{Pool, Postgres};
 
-    fn make_sig(discord_user_id: &str, ts: i64, secret: &str) -> String {
+    fn make_ctx(payload: serde_json::Value, secret: &str) -> String {
         type HmacSha256 = Hmac<Sha256>;
-        let msg = format!("{discord_user_id}:{ts}");
+
+        let payload_segment = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(msg.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
+        mac.update(payload_segment.as_bytes());
+        let signature_segment = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+
+        format!("{payload_segment}.{signature_segment}")
     }
 
     #[test]
-    fn is_valid_state_token_accepts_correct_signature() {
-        let secret = "test_secret";
-        let ts = Utc::now().timestamp();
-        let sig = make_sig("user1", ts, secret);
-        assert!(verify_bot_signature("user1", &ts.to_string(), &sig, secret));
+    fn verify_oauth_context_accepts_valid_payload() {
+        let now = Utc::now().timestamp();
+        let ctx = make_ctx(
+            json!({
+                "v": 1,
+                "discord_user_id": "123456789012345678",
+                "guild_id": "987654321098765432",
+                "interaction_id": "12222333344445555",
+                "nonce": "bM0XvTa5yT4K0z2yPxtA3A",
+                "iat": now,
+                "exp": now + 300,
+            }),
+            "secret",
+        );
+
+        let payload = verify_oauth_context(&ctx, "secret", 300).expect("ctx should validate");
+
+        assert_eq!(payload.discord_user_id, "123456789012345678");
+        assert_eq!(payload.guild_id.as_deref(), Some("987654321098765432"));
     }
 
     #[test]
-    fn is_valid_state_token_rejects_tampered_user() {
-        let secret = "test_secret";
-        let ts = Utc::now().timestamp();
-        let sig = make_sig("user1", ts, secret);
-        assert!(!verify_bot_signature(
-            "user2",
-            &ts.to_string(),
-            &sig,
-            secret
-        ));
+    fn verify_oauth_context_rejects_bad_signature() {
+        let now = Utc::now().timestamp();
+        let ctx = make_ctx(
+            json!({
+                "v": 1,
+                "discord_user_id": "123",
+                "interaction_id": "456",
+                "nonce": "nonce",
+                "iat": now,
+                "exp": now + 300,
+            }),
+            "secret",
+        );
+
+        let err = verify_oauth_context(&ctx, "wrong-secret", 300).unwrap_err();
+        assert_eq!(err, OAuthContextError::InvalidSignature);
     }
 
     #[test]
-    fn is_valid_state_token_rejects_expired_timestamp() {
-        let secret = "test_secret";
-        let ts = Utc::now().timestamp() - 400;
-        let sig = make_sig("user1", ts, secret);
-        assert!(!verify_bot_signature(
-            "user1",
-            &ts.to_string(),
-            &sig,
-            secret
-        ));
-    }
+    fn verify_oauth_context_rejects_expired_payload() {
+        let now = Utc::now().timestamp();
+        let ctx = make_ctx(
+            json!({
+                "v": 1,
+                "discord_user_id": "123",
+                "interaction_id": "456",
+                "nonce": "nonce",
+                "iat": now - 600,
+                "exp": now - 1,
+            }),
+            "secret",
+        );
 
-    #[test]
-    fn is_valid_state_token_rejects_bad_hex() {
-        assert!(!verify_bot_signature("u", "0", "not_hex!!!", "s"));
+        let err = verify_oauth_context(&ctx, "secret", 300).unwrap_err();
+        assert_eq!(err, OAuthContextError::Expired);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -558,7 +604,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn consume_session_succeeds_for_valid_state(pool: Pool<Postgres>) {
-        insert_oauth_session("state_abc", "123456789", &pool)
+        insert_oauth_session("state_abc", "123456789", 600, &pool)
             .await
             .expect("insert should succeed");
 
@@ -585,7 +631,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn consume_session_fails_on_replay(pool: Pool<Postgres>) {
-        insert_oauth_session("replayable", "111", &pool)
+        insert_oauth_session("replayable", "111", 600, &pool)
             .await
             .expect("insert should succeed");
 
@@ -604,7 +650,6 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn consume_session_fails_for_expired_state(pool: Pool<Postgres>) {
-        // Insert a session that is already past its TTL.
         sqlx::query(
             "INSERT INTO oauth_sessions (state, discord_user_id, expires_at) \
              VALUES ($1, $2, NOW() - INTERVAL '1 minute')",

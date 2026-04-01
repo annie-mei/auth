@@ -1,24 +1,24 @@
 use crate::utils::{
     consts::ANILIST_AUTH,
-    functions::{get_state_token, insert_oauth_session, verify_bot_signature},
+    functions::{get_state_token, insert_oauth_session, verify_oauth_context},
     structs::MyState,
 };
 
 use rocket::{State, response::Redirect, response::status::BadRequest};
 use url::Url;
 
-#[get("/login?<discord_user_id>&<ts>&<sig>")]
-#[tracing::instrument(name = "login", skip(state, sig))]
-pub async fn login(
-    discord_user_id: &str,
-    ts: &str,
-    sig: &str,
-    state: &State<MyState>,
-) -> Result<Redirect, BadRequest<String>> {
-    if !verify_bot_signature(discord_user_id, ts, sig, &state.bot_auth_secret) {
-        info!("Login rejected: invalid or expired bot signature");
-        return Err(BadRequest("Invalid or expired login signature".to_string()));
-    }
+#[get("/oauth/anilist/start?<ctx>")]
+#[tracing::instrument(name = "oauth.start", skip(state, ctx))]
+pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadRequest<String>> {
+    let payload = verify_oauth_context(
+        ctx,
+        &state.context_signing_secret,
+        state.context_ttl_seconds,
+    )
+    .map_err(|error| {
+        info!("OAuth start rejected: invalid or expired context: {error:?}");
+        BadRequest("Invalid or expired OAuth context".to_string())
+    })?;
 
     let state_token = get_state_token();
     let params = [
@@ -30,12 +30,17 @@ pub async fn login(
     let url = Url::parse_with_params(ANILIST_AUTH, &params)
         .map_err(|e| BadRequest(format!("Failed to build AniList auth URL: {e}")))?;
 
-    insert_oauth_session(&state_token, discord_user_id, &state.pool)
-        .await
-        .map_err(|e| {
-            sentry::capture_error(&e);
-            BadRequest(format!("Failed to create OAuth session: {e}"))
-        })?;
+    insert_oauth_session(
+        &state_token,
+        &payload.discord_user_id,
+        state.state_ttl_seconds,
+        &state.pool,
+    )
+    .await
+    .map_err(|e| {
+        sentry::capture_error(&e);
+        BadRequest(format!("Failed to create OAuth session: {e}"))
+    })?;
 
     info!("Created OAuth session for Discord user");
     Ok(Redirect::to(url.to_string()))
@@ -43,36 +48,45 @@ pub async fn login(
 
 #[cfg(test)]
 mod tests {
-    use super::login;
+    use super::start;
     use crate::utils::{
-        functions::verify_bot_signature,
+        functions::verify_oauth_context,
         structs::{MyState, StateToken},
     };
 
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::Utc;
     use hmac::{Hmac, Mac};
     use rocket::{Config, http::Status, local::asynchronous::Client, routes};
+    use serde_json::json;
     use sha2::Sha256;
     use sqlx::{Pool, Postgres};
     use url::Url;
 
-    const TEST_BOT_SECRET: &str = "test-bot-auth-secret-for-unit-tests";
+    const TEST_CONTEXT_SECRET: &str = "test-oauth-context-secret-for-unit-tests";
 
-    fn sign_login(discord_user_id: &str, ts: i64) -> String {
+    fn signed_start_url(discord_user_id: &str) -> String {
         type HmacSha256 = Hmac<Sha256>;
-        let message = format!("{discord_user_id}:{ts}");
-        let mut mac = HmacSha256::new_from_slice(TEST_BOT_SECRET.as_bytes()).expect("HMAC key");
-        mac.update(message.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
+
+        let now = Utc::now().timestamp();
+        let payload = json!({
+            "v": 1,
+            "discord_user_id": discord_user_id,
+            "guild_id": "987654321098765432",
+            "interaction_id": "12222333344445555",
+            "nonce": "bM0XvTa5yT4K0z2yPxtA3A",
+            "iat": now,
+            "exp": now + 300,
+        });
+        let payload_segment =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload should serialize"));
+        let mut mac = HmacSha256::new_from_slice(TEST_CONTEXT_SECRET.as_bytes()).expect("HMAC key");
+        mac.update(payload_segment.as_bytes());
+        let signature_segment = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+
+        format!("/oauth/anilist/start?ctx={payload_segment}.{signature_segment}")
     }
 
-    fn signed_login_url(discord_user_id: &str) -> String {
-        let ts = Utc::now().timestamp();
-        let sig = sign_login(discord_user_id, ts);
-        format!("/login?discord_user_id={discord_user_id}&ts={ts}&sig={sig}")
-    }
-
-    /// Helper route that exercises the StateToken guard for integration testing.
     #[get("/consume?<state>")]
     fn consume(state: &str, _state_token: StateToken) -> &'static str {
         let _ = state;
@@ -86,8 +100,10 @@ mod tests {
         let state = MyState {
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
-            redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
-            bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
+            context_signing_secret: TEST_CONTEXT_SECRET.to_string(),
+            context_ttl_seconds: 300,
+            state_ttl_seconds: 600,
             token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
             user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
@@ -95,7 +111,7 @@ mod tests {
         };
 
         rocket::custom(figment)
-            .mount("/", routes![login])
+            .mount("/", routes![start])
             .manage(state)
     }
 
@@ -106,8 +122,10 @@ mod tests {
         let state = MyState {
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
-            redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
-            bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
+            context_signing_secret: TEST_CONTEXT_SECRET.to_string(),
+            context_ttl_seconds: 300,
+            state_ttl_seconds: 600,
             token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
             user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
@@ -115,22 +133,22 @@ mod tests {
         };
 
         rocket::custom(figment)
-            .mount("/", routes![login, consume])
+            .mount("/", routes![start, consume])
             .manage(state)
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn login_redirects_to_anilist(pool: Pool<Postgres>) {
+    async fn start_redirects_to_anilist(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
-        let response = client.get(signed_login_url("123456789")).dispatch().await;
+        let response = client.get(signed_start_url("123456789")).dispatch().await;
 
         assert_eq!(response.status(), Status::SeeOther);
         let location = response
             .headers()
             .get_one("location")
-            .expect("login should redirect");
+            .expect("start should redirect");
         assert!(location.contains("anilist.co"));
 
         drop(response);
@@ -139,15 +157,12 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn login_rejects_invalid_signature(pool: Pool<Postgres>) {
+    async fn start_rejects_invalid_context(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
-        let ts = Utc::now().timestamp();
         let response = client
-            .get(format!(
-                "/login?discord_user_id=123&ts={ts}&sig=0000000000000000"
-            ))
+            .get("/oauth/anilist/start?ctx=not-a-valid-context")
             .dispatch()
             .await;
 
@@ -159,15 +174,15 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn login_does_not_set_cookies(pool: Pool<Postgres>) {
+    async fn start_does_not_set_cookies(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
-        let response = client.get(signed_login_url("123456789")).dispatch().await;
+        let response = client.get(signed_start_url("123456789")).dispatch().await;
 
         assert!(
             response.headers().get_one("set-cookie").is_none(),
-            "login should not set any cookies"
+            "start should not set any cookies"
         );
 
         drop(response);
@@ -181,11 +196,11 @@ mod tests {
             .await
             .expect("rocket client should build");
 
-        let response = client.get(signed_login_url("987654321")).dispatch().await;
+        let response = client.get(signed_start_url("987654321")).dispatch().await;
         let redirect_url = response
             .headers()
             .get_one("location")
-            .expect("login should redirect");
+            .expect("start should redirect");
         let state = Url::parse(redirect_url)
             .expect("redirect URL should parse")
             .query_pairs()
@@ -213,26 +228,25 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_expired_timestamp() {
-        let old_ts = (Utc::now().timestamp() - 400).to_string();
-        let sig = sign_login("user1", old_ts.parse().unwrap());
-        assert!(!verify_bot_signature(
-            "user1",
-            &old_ts,
-            &sig,
-            TEST_BOT_SECRET
-        ));
-    }
+    fn verify_rejects_expired_context() {
+        type HmacSha256 = Hmac<Sha256>;
 
-    #[test]
-    fn verify_rejects_wrong_secret() {
-        let ts = Utc::now().timestamp();
-        let sig = sign_login("user1", ts);
-        assert!(!verify_bot_signature(
-            "user1",
-            &ts.to_string(),
-            &sig,
-            "wrong-secret"
-        ));
+        let now = Utc::now().timestamp();
+        let payload = json!({
+            "v": 1,
+            "discord_user_id": "user1",
+            "interaction_id": "456",
+            "nonce": "nonce",
+            "iat": now - 600,
+            "exp": now - 1,
+        });
+        let payload_segment =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload should serialize"));
+        let mut mac = HmacSha256::new_from_slice(TEST_CONTEXT_SECRET.as_bytes()).expect("HMAC key");
+        mac.update(payload_segment.as_bytes());
+        let signature_segment = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        let ctx = format!("{payload_segment}.{signature_segment}");
+
+        assert!(verify_oauth_context(&ctx, TEST_CONTEXT_SECRET, 300).is_err());
     }
 }
