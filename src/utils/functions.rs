@@ -68,7 +68,9 @@ pub enum OAuthContextError {
     UnsupportedVersion,
     MissingNonce,
     Expired,
-    InvalidIssuedAt,
+    FutureIssuedAt,
+    MalformedExpiry,
+    LifetimeTooLong,
 }
 
 #[tracing::instrument(skip(client, access_token))]
@@ -332,11 +334,16 @@ pub fn verify_oauth_context(
         return Err(OAuthContextError::Expired);
     }
 
-    if payload.iat > now + MAX_CONTEXT_FUTURE_SKEW_SECONDS
-        || payload.exp < payload.iat
-        || payload.exp.saturating_sub(payload.iat) > max_ttl_seconds
-    {
-        return Err(OAuthContextError::InvalidIssuedAt);
+    if payload.iat > now + MAX_CONTEXT_FUTURE_SKEW_SECONDS {
+        return Err(OAuthContextError::FutureIssuedAt);
+    }
+
+    if payload.exp < payload.iat {
+        return Err(OAuthContextError::MalformedExpiry);
+    }
+
+    if payload.exp.saturating_sub(payload.iat) > max_ttl_seconds {
+        return Err(OAuthContextError::LifetimeTooLong);
     }
 
     Ok(payload)
@@ -490,6 +497,63 @@ mod tests {
 
         let err = verify_oauth_context(&ctx, "secret", 300).unwrap_err();
         assert_eq!(err, OAuthContextError::Expired);
+    }
+
+    #[test]
+    fn verify_oauth_context_rejects_future_issued_at() {
+        let now = Utc::now().timestamp();
+        let ctx = make_ctx(
+            json!({
+                "v": 1,
+                "discord_user_id": "123",
+                "interaction_id": "456",
+                "nonce": "nonce",
+                "iat": now + 120,
+                "exp": now + 420,
+            }),
+            "secret",
+        );
+
+        let err = verify_oauth_context(&ctx, "secret", 300).unwrap_err();
+        assert_eq!(err, OAuthContextError::FutureIssuedAt);
+    }
+
+    #[test]
+    fn verify_oauth_context_rejects_exp_before_iat() {
+        let now = Utc::now().timestamp();
+        let ctx = make_ctx(
+            json!({
+                "v": 1,
+                "discord_user_id": "123",
+                "interaction_id": "456",
+                "nonce": "nonce",
+                "iat": now + 50,
+                "exp": now + 10,
+            }),
+            "secret",
+        );
+
+        let err = verify_oauth_context(&ctx, "secret", 300).unwrap_err();
+        assert_eq!(err, OAuthContextError::MalformedExpiry);
+    }
+
+    #[test]
+    fn verify_oauth_context_rejects_excessive_lifetime() {
+        let now = Utc::now().timestamp();
+        let ctx = make_ctx(
+            json!({
+                "v": 1,
+                "discord_user_id": "123",
+                "interaction_id": "456",
+                "nonce": "nonce",
+                "iat": now,
+                "exp": now + 9999,
+            }),
+            "secret",
+        );
+
+        let err = verify_oauth_context(&ctx, "secret", 300).unwrap_err();
+        assert_eq!(err, OAuthContextError::LifetimeTooLong);
     }
 
     #[sqlx::test(migrations = "./migrations")]
