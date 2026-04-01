@@ -39,7 +39,8 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
     .await
     .map_err(|e| {
         sentry::capture_error(&e);
-        BadRequest(format!("Failed to create OAuth session: {e}"))
+        error!("Failed to create OAuth session: {e}");
+        BadRequest("Failed to create OAuth session. Please try again.".to_string())
     })?;
 
     info!("Created OAuth session for Discord user");
