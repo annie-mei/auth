@@ -325,6 +325,11 @@ pub fn verify_oauth_context(
         return Err(OAuthContextError::UnsupportedVersion);
     }
 
+    // The nonce is validated for presence but not persisted for replay detection.
+    // The ctx URL is delivered via an ephemeral Discord message visible only to the
+    // invoking user, so the security model relies on that delivery channel's secrecy.
+    // Replay of the same ctx produces independent OAuth sessions, each with a single-use
+    // state token enforced at the callback layer (oauth_sessions.used_at).
     if payload.nonce.trim().is_empty() {
         return Err(OAuthContextError::MissingNonce);
     }
