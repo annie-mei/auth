@@ -16,6 +16,7 @@ split-debuginfo = "packed"
 
 [dependencies]
 anyhow = "1.0.100"
+base64 = "0.22"
 dotenvy = "0.15.7"
 nanoid = "0.4.0"
 reqwest = { version = "0.12.24", default-features = false, features = [
@@ -34,7 +35,6 @@ sqlx = { version = "0.8.6", default-features = false, features = [
   "migrate",
   "chrono",
 ] }
-hex = "0.4"
 hmac = "0.12"
 sha2 = "0.10"
 tracing = "0.1"

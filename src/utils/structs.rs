@@ -6,11 +6,24 @@ pub struct MyState {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
-    pub bot_auth_secret: String,
+    pub context_signing_secret: String,
+    pub context_ttl_seconds: i64,
+    pub state_ttl_seconds: i64,
     pub token_endpoint: String,
     pub user_endpoint: String,
     pub client: reqwest::Client,
     pub pool: PgPool,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct OAuthContextPayload {
+    pub v: u8,
+    pub discord_user_id: String,
+    pub guild_id: Option<String>,
+    pub interaction_id: String,
+    pub nonce: String,
+    pub iat: i64,
+    pub exp: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,7 +98,7 @@ pub enum StateTokenError {
 
 #[cfg(test)]
 mod tests {
-    use super::TokenResponse;
+    use super::{OAuthContextPayload, TokenResponse};
 
     #[test]
     fn token_response_deserializes_full_payload() {
@@ -110,5 +123,22 @@ mod tests {
         assert!(r.refresh_token.is_none());
         assert!(r.expires_in.is_none());
         assert!(r.token_type.is_none());
+    }
+
+    #[test]
+    fn oauth_context_payload_deserializes_v1_shape() {
+        let json = r#"{
+            "v": 1,
+            "discord_user_id": "123456789012345678",
+            "guild_id": "987654321098765432",
+            "interaction_id": "12222333344445555",
+            "nonce": "bM0XvTa5yT4K0z2yPxtA3A",
+            "iat": 1711500000,
+            "exp": 1711500300
+        }"#;
+        let payload: OAuthContextPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.v, 1);
+        assert_eq!(payload.discord_user_id, "123456789012345678");
+        assert_eq!(payload.guild_id.as_deref(), Some("987654321098765432"));
     }
 }

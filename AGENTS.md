@@ -18,8 +18,8 @@ migrations/
 src/
 |- main.rs              # App entrypoint, secrets loading, Rocket setup, migration runner
 |- routes/
-|  |- login.rs          # /login redirect to AniList OAuth
-|  |- authorized.rs     # /authorized callback and token exchange
+|  |- start.rs          # /oauth/anilist/start redirect to AniList OAuth
+|  |- authorized.rs     # /oauth/anilist/callback token exchange
 |  `- mod.rs
 `- utils/
    |- consts.rs         # AniList endpoint constants
@@ -27,9 +27,7 @@ src/
    |- guards.rs         # Rocket request guard for state validation
    |- structs.rs        # app state + request/response types
    `- mod.rs
-sample.Secrets.toml     # runtime secrets example
-sample.Secrets.dev.toml # local development secrets example
-sample.Rocket.toml      # Rocket config example
+.env.example            # environment variable template
 rustfmt.toml            # formatting config
 ```
 
@@ -133,17 +131,18 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 
 - `SENTRY_DSN`
 - `ANILIST_CLIENT_ID`
-- `ANILIST_SECRET`
-- `REDIRECT_URL`
+- `ANILIST_CLIENT_SECRET`
+- `ANILIST_REDIRECT_URI`
+- `OAUTH_CONTEXT_SIGNING_SECRET`
+- `OAUTH_CONTEXT_TTL_SECONDS`
+- `OAUTH_STATE_TTL_SECONDS`
 - `DATABASE_URL`
 - `ROCKET_SECRET_KEY`
-- `BOT_AUTH_SECRET`
 
 Important notes:
 
-- The checked-in sample secrets files previously used `SECRET`, and runtime now reads `ROCKET_SECRET_KEY`.
+- Keep `.env.example` in sync with the canonical env names above.
 - Treat runtime code as the source of truth unless you are intentionally fixing that mismatch.
-- Never commit real `Secrets.toml`, `Secrets.dev.toml`, or `Rocket.toml` files.
 - Never log OAuth tokens, client secrets, DSNs, or raw database URLs.
 
 ## Code Style Guidelines
@@ -205,11 +204,11 @@ Important notes:
 
 - This crate is an auth server for Annie Mei, not the main bot codebase.
 - Changes to OAuth parameters, callback behavior, or token persistence may require matching updates in `../annie-mei`.
-- The sample config files are examples only; they are not guaranteed to match runtime code perfectly.
+- `.env.example` is a template only; it is not guaranteed to match runtime code perfectly.
 - Migrations live in `migrations/` and run automatically on startup via `sqlx::migrate!()`. Add new migrations as versioned `.up.sql`/`.down.sql` pairs; never edit existing migration files.
 - The most reusable logic currently lives under `src/utils/`; keep additions focused instead of growing one catch-all file.
 
 ## Maintenance Notes
 
 - Update this file when build commands, test layout, or repo conventions change.
-- Follow the checked-in code over sample config files when they disagree.
+- Follow the checked-in code over `.env.example` when they disagree.

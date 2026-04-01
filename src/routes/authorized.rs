@@ -13,7 +13,7 @@ use rocket::{
     serde::json::Json,
 };
 
-#[get("/authorized?<code>&<error>&<error_description>")]
+#[get("/oauth/anilist/callback?<code>&<error>&<error_description>")]
 #[tracing::instrument(name = "authorized", skip_all, fields(discord_user_id))]
 pub async fn authorized(
     code: Option<&str>,
@@ -179,15 +179,17 @@ fn callback_error_for_state_token(error: StateTokenError) -> Custom<Json<Callbac
 mod tests {
     use super::authorized;
     use crate::{
-        routes::login::login,
+        routes::start::start,
         utils::{
             functions::{fetch_credential_by_discord_user, upsert_oauth_credentials},
             structs::{CallbackResponse, MyState},
         },
     };
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::Utc;
     use hmac::{Hmac, Mac};
     use rocket::{Config, http::Status, local::asynchronous::Client, routes};
+    use serde_json::json;
     use sha2::Sha256;
     use sqlx::{Pool, Postgres};
     use wiremock::{
@@ -195,20 +197,27 @@ mod tests {
         matchers::{method, path},
     };
 
-    const TEST_BOT_SECRET: &str = "test-bot-auth-secret-for-unit-tests";
+    const TEST_CONTEXT_SECRET: &str = "test-oauth-context-secret-for-unit-tests";
 
-    fn sign_login(discord_user_id: &str, ts: i64) -> String {
+    fn signed_start_url(discord_user_id: &str) -> String {
         type HmacSha256 = Hmac<Sha256>;
-        let message = format!("{discord_user_id}:{ts}");
-        let mut mac = HmacSha256::new_from_slice(TEST_BOT_SECRET.as_bytes()).expect("HMAC key");
-        mac.update(message.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
-    }
+        let now = Utc::now().timestamp();
+        let payload = json!({
+            "v": 1,
+            "discord_user_id": discord_user_id,
+            "guild_id": "987654321098765432",
+            "interaction_id": "12222333344445555",
+            "nonce": "bM0XvTa5yT4K0z2yPxtA3A",
+            "iat": now,
+            "exp": now + 300,
+        });
+        let payload_segment =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload should serialize"));
+        let mut mac = HmacSha256::new_from_slice(TEST_CONTEXT_SECRET.as_bytes()).expect("HMAC key");
+        mac.update(payload_segment.as_bytes());
+        let signature_segment = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
 
-    fn signed_login_url(discord_user_id: &str) -> String {
-        let ts = Utc::now().timestamp();
-        let sig = sign_login(discord_user_id, ts);
-        format!("/login?discord_user_id={discord_user_id}&ts={ts}&sig={sig}")
+        format!("/oauth/anilist/start?ctx={payload_segment}.{signature_segment}")
     }
 
     fn build_test_rocket(
@@ -222,8 +231,10 @@ mod tests {
         let state = MyState {
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
-            redirect_uri: "http://127.0.0.1:8000/authorized".to_string(),
-            bot_auth_secret: TEST_BOT_SECRET.to_string(),
+            redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
+            context_signing_secret: TEST_CONTEXT_SECRET.to_string(),
+            context_ttl_seconds: 300,
+            state_ttl_seconds: 600,
             token_endpoint,
             user_endpoint,
             client: reqwest::Client::new(),
@@ -231,19 +242,19 @@ mod tests {
         };
 
         rocket::custom(figment)
-            .mount("/", routes![login, authorized])
+            .mount("/", routes![start, authorized])
             .manage(state)
     }
 
-    async fn login_and_extract_state(client: &Client) -> String {
+    async fn start_and_extract_state(client: &Client) -> String {
         let response = client
-            .get(signed_login_url("555666777888"))
+            .get(signed_start_url("555666777888"))
             .dispatch()
             .await;
         let location = response
             .headers()
             .get_one("location")
-            .expect("login should redirect");
+            .expect("start should redirect");
         url::Url::parse(location)
             .expect("redirect URL should parse")
             .query_pairs()
@@ -283,9 +294,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=auth_code_1"
+            ))
             .dispatch()
             .await;
 
@@ -334,9 +347,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=bad_code"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=bad_code"
+            ))
             .dispatch()
             .await;
 
@@ -380,9 +395,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=bad_client"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=bad_client"
+            ))
             .dispatch()
             .await;
 
@@ -429,9 +446,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=server_error_code"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=server_error_code"
+            ))
             .dispatch()
             .await;
 
@@ -478,9 +497,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=bad_payload"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=bad_payload"
+            ))
             .dispatch()
             .await;
 
@@ -512,10 +533,10 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
             .get(format!(
-                "/authorized?state={state}&error=access_denied&error_description=Denied%20by%20user"
+                "/oauth/anilist/callback?state={state}&error=access_denied&error_description=Denied%20by%20user"
             ))
             .dispatch()
             .await;
@@ -574,9 +595,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=auth_code_1"
+            ))
             .dispatch()
             .await;
 
@@ -614,7 +637,7 @@ mod tests {
         .expect("rocket client should build");
 
         let response = client
-            .get("/authorized?state=invalid_state&code=auth_code_1")
+            .get("/oauth/anilist/callback?state=invalid_state&code=auth_code_1")
             .dispatch()
             .await;
 
@@ -643,10 +666,10 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let first_response = client
             .get(format!(
-                "/authorized?state={state}&error=access_denied&error_description=Denied%20by%20user"
+                "/oauth/anilist/callback?state={state}&error=access_denied&error_description=Denied%20by%20user"
             ))
             .dispatch()
             .await;
@@ -654,7 +677,9 @@ mod tests {
         drop(first_response);
 
         let replay_response = client
-            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=auth_code_1"
+            ))
             .dispatch()
             .await;
 
@@ -709,9 +734,11 @@ mod tests {
         .await
         .expect("rocket client should build");
 
-        let state = login_and_extract_state(&client).await;
+        let state = start_and_extract_state(&client).await;
         let response = client
-            .get(format!("/authorized?state={state}&code=auth_code_1"))
+            .get(format!(
+                "/oauth/anilist/callback?state={state}&code=auth_code_1"
+            ))
             .dispatch()
             .await;
 
