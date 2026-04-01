@@ -66,6 +66,7 @@ pub enum OAuthContextError {
     Malformed,
     InvalidSignature,
     UnsupportedVersion,
+    MissingDiscordUserId,
     MissingNonce,
     Expired,
     FutureIssuedAt,
@@ -323,6 +324,10 @@ pub fn verify_oauth_context(
 
     if payload.v != CONTEXT_VERSION {
         return Err(OAuthContextError::UnsupportedVersion);
+    }
+
+    if payload.discord_user_id.trim().is_empty() {
+        return Err(OAuthContextError::MissingDiscordUserId);
     }
 
     // The nonce is validated for presence but not persisted for replay detection.
