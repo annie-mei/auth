@@ -19,7 +19,8 @@ src/
 |- main.rs              # App entrypoint, secrets loading, Rocket setup, migration runner
 |- routes/
 |  |- start.rs          # /oauth/anilist/start redirect to AniList OAuth
-|  |- authorized.rs     # /oauth/anilist/callback token exchange
+|  |- authorized.rs     # /oauth/anilist/callback token exchange + HTML pages
+|  |- catchers.rs       # Custom error catchers (404, etc.)
 |  `- mod.rs
 `- utils/
    |- consts.rs         # AniList endpoint constants
@@ -27,6 +28,8 @@ src/
    |- guards.rs         # Rocket request guard for state validation
    |- structs.rs        # app state + request/response types
    `- mod.rs
+static/
+`- favicon.png          # Favicon served at /static/favicon.png
 .env.example            # environment variable template
 rustfmt.toml            # formatting config
 ```

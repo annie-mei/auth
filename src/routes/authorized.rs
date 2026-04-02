@@ -3,14 +3,13 @@ use crate::utils::{
         UpsertOAuthCredentialsError, exchange_code_for_token, fetch_viewer_id, token_expires_at,
         upsert_oauth_credentials,
     },
-    structs::{CallbackResponse, MyState, StateToken, StateTokenError},
+    structs::{MyState, StateToken, StateTokenError},
 };
 
 use rocket::{
     State,
     http::Status,
-    response::{status, status::Custom},
-    serde::json::Json,
+    response::{content::RawHtml, status::Custom},
 };
 
 #[get("/oauth/anilist/callback?<code>&<error>&<error_description>")]
@@ -21,7 +20,7 @@ pub async fn authorized(
     error_description: Option<&str>,
     state_token: Result<StateToken, StateTokenError>,
     state: &State<MyState>,
-) -> Custom<Json<CallbackResponse>> {
+) -> Custom<RawHtml<String>> {
     let state_token = match state_token {
         Ok(state_token) => state_token,
         Err(error) => return callback_error_for_state_token(error),
@@ -47,12 +46,11 @@ pub async fn authorized(
             _ => "AniList authorization failed. Please try again.",
         };
 
-        return callback_error("oauth_error", message, Status::BadRequest);
+        return callback_error(message, Status::BadRequest);
     }
 
     let Some(code) = code else {
         return callback_error(
-            "missing_code",
             "Authorization code is missing from the callback.",
             Status::BadRequest,
         );
@@ -70,7 +68,7 @@ pub async fn authorized(
     {
         Ok(response) => response,
         Err(error) => {
-            return callback_error("token_exchange_failed", error.message(), error.status());
+            return callback_error(error.message(), error.status());
         }
     };
 
@@ -86,7 +84,7 @@ pub async fn authorized(
     {
         Ok(user_id) => user_id,
         Err(error) => {
-            return callback_error("viewer_fetch_failed", error.message(), error.status());
+            return callback_error(error.message(), error.status());
         }
     };
     info!("User data fetched successfully");
@@ -103,7 +101,6 @@ pub async fn authorized(
     {
         return match error {
             UpsertOAuthCredentialsError::AlreadyLinked => callback_error(
-                "already_linked",
                 "This AniList account is already linked to another Discord user.",
                 Status::BadRequest,
             ),
@@ -111,7 +108,6 @@ pub async fn authorized(
                 sentry::capture_error(&error);
                 error!("Failed to persist AniList credentials");
                 callback_error(
-                    "persistence_failed",
                     "Failed to save AniList credentials. Please retry.",
                     Status::InternalServerError,
                 )
@@ -120,59 +116,147 @@ pub async fn authorized(
     }
 
     info!("Saved OAuth credentials for Discord user");
-    callback_success("authorized", "AniList account connected successfully.")
+    callback_success("AniList account connected successfully.")
 }
 
-fn callback_success(code: &str, message: &str) -> Custom<Json<CallbackResponse>> {
-    status::Custom(
-        Status::Ok,
-        Json(CallbackResponse {
-            status: "success".to_string(),
-            code: code.to_string(),
-            message: message.to_string(),
-        }),
-    )
+fn callback_success(message: &str) -> Custom<RawHtml<String>> {
+    Custom(Status::Ok, RawHtml(render_page(true, message)))
 }
 
-fn callback_error(code: &str, message: &str, status: Status) -> Custom<Json<CallbackResponse>> {
-    status::Custom(
-        status,
-        Json(CallbackResponse {
-            status: "error".to_string(),
-            code: code.to_string(),
-            message: message.to_string(),
-        }),
-    )
+fn callback_error(message: &str, status: Status) -> Custom<RawHtml<String>> {
+    Custom(status, RawHtml(render_page(false, message)))
 }
 
-fn callback_error_for_state_token(error: StateTokenError) -> Custom<Json<CallbackResponse>> {
+fn callback_error_for_state_token(error: StateTokenError) -> Custom<RawHtml<String>> {
     match error {
         StateTokenError::Missing => callback_error(
-            "missing_state",
             "State parameter is missing from the callback.",
             Status::BadRequest,
         ),
         StateTokenError::Invalid => callback_error(
-            "invalid_state",
             "State parameter is invalid. Please restart the AniList login flow.",
             Status::BadRequest,
         ),
         StateTokenError::Expired => callback_error(
-            "expired_state",
             "State parameter has expired. Please restart the AniList login flow.",
             Status::BadRequest,
         ),
         StateTokenError::Replayed => callback_error(
-            "replayed_state",
             "This login link has already been used. Please restart the AniList login flow.",
             Status::BadRequest,
         ),
         StateTokenError::Internal => callback_error(
-            "state_validation_failed",
             "Failed to validate the AniList login state. Please retry.",
             Status::InternalServerError,
         ),
     }
+}
+
+fn render_page(success: bool, message: &str) -> String {
+    let (title, heading, hint, accent, icon_bg, icon_svg) = if success {
+        (
+            "Connected - Annie Mei",
+            "Account Connected",
+            "You can close this tab now.",
+            "#22c55e",
+            "rgba(34, 197, 94, 0.12)",
+            r##"<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>"##,
+        )
+    } else {
+        (
+            "Error - Annie Mei",
+            "Something Went Wrong",
+            "Please try again from Discord.",
+            "#ef4444",
+            "rgba(239, 68, 68, 0.12)",
+            r##"<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>"##,
+        )
+    };
+
+    let escaped_message = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<link rel="icon" type="image/png" href="/static/favicon.png">
+<style>
+  *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+  body{{
+    min-height:100vh;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(145deg,#0f0f13 0%,#1a1a2e 100%);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    color:#e4e4e7;
+    padding:1rem;
+  }}
+  .card{{
+    width:100%;max-width:420px;
+    background:rgba(255,255,255,0.04);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:16px;
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    box-shadow:0 8px 32px rgba(0,0,0,0.3);
+    padding:2.5rem 2rem;
+    text-align:center;
+    animation:fadeSlideIn .5s ease-out;
+  }}
+  .icon{{
+    width:72px;height:72px;
+    border-radius:50%;
+    background:{icon_bg};
+    display:flex;align-items:center;justify-content:center;
+    margin:0 auto 1.5rem;
+    animation:scaleIn .4s ease-out .15s both;
+  }}
+  h1{{
+    font-size:1.375rem;font-weight:600;
+    color:{accent};
+    margin-bottom:.75rem;
+  }}
+  .message{{
+    font-size:.9375rem;line-height:1.6;
+    color:#a1a1aa;
+    margin-bottom:1.5rem;
+  }}
+  .hint{{
+    font-size:.8125rem;
+    color:#52525b;
+  }}
+  .brand{{
+    margin-top:2rem;
+    font-size:.75rem;
+    color:#3f3f46;
+    letter-spacing:.04em;
+  }}
+  @keyframes fadeSlideIn{{
+    from{{opacity:0;transform:translateY(12px)}}
+    to{{opacity:1;transform:translateY(0)}}
+  }}
+  @keyframes scaleIn{{
+    from{{opacity:0;transform:scale(.6)}}
+    to{{opacity:1;transform:scale(1)}}
+  }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">{icon_svg}</div>
+    <h1>{heading}</h1>
+    <p class="message">{escaped_message}</p>
+    <p class="hint">{hint}</p>
+    <p class="brand">Annie Mei</p>
+  </div>
+</body>
+</html>"#
+    )
 }
 
 #[cfg(test)]
@@ -182,7 +266,7 @@ mod tests {
         routes::start::start,
         utils::{
             functions::{fetch_credential_by_discord_user, upsert_oauth_credentials},
-            structs::{CallbackResponse, MyState},
+            structs::MyState,
         },
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -306,11 +390,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "success");
-        assert_eq!(callback.code, "authorized");
+            .expect("response should contain HTML");
+        assert!(body.contains("Account Connected"));
+        assert!(body.contains("AniList account connected successfully."));
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await
@@ -359,12 +441,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "token_exchange_failed");
-        assert!(callback.message.contains("invalid or expired"));
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("invalid or expired"));
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await
@@ -407,15 +486,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "token_exchange_failed");
-        assert_eq!(
-            callback.message,
-            "AniList OAuth client configuration is invalid"
-        );
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("AniList OAuth client configuration is invalid"));
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await
@@ -458,15 +531,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "token_exchange_failed");
-        assert_eq!(
-            callback.message,
-            "AniList is temporarily unavailable. Please try again."
-        );
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("AniList is temporarily unavailable. Please try again."));
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await
@@ -509,15 +576,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "token_exchange_failed");
-        assert_eq!(
-            callback.message,
-            "Failed to parse AniList token response. Please try again."
-        );
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("Failed to parse AniList token response. Please try again."));
 
         drop(client);
         pool.close().await;
@@ -545,15 +606,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "oauth_error");
-        assert_eq!(
-            callback.message,
-            "Authorization was denied on AniList. Please try again."
-        );
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("Authorization was denied on AniList. Please try again."));
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await
@@ -607,15 +662,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "viewer_fetch_failed");
-        assert_eq!(
-            callback.message,
-            "Failed to parse AniList viewer response. Please try again."
-        );
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("Failed to parse AniList viewer response. Please try again."));
 
         let persisted = fetch_credential_by_discord_user("555666777888", &pool)
             .await
@@ -627,7 +676,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn authorized_invalid_state_returns_structured_json(pool: Pool<Postgres>) {
+    async fn authorized_invalid_state_returns_error_page(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(
             pool.clone(),
             "https://anilist.co/api/v2/oauth/token".to_string(),
@@ -645,19 +694,16 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "invalid_state");
-        assert!(callback.message.contains("Please restart"));
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("Please restart"));
 
         drop(client);
         pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn authorized_replayed_state_returns_structured_json(pool: Pool<Postgres>) {
+    async fn authorized_replayed_state_returns_error_page(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(
             pool.clone(),
             "https://anilist.co/api/v2/oauth/token".to_string(),
@@ -687,11 +733,9 @@ mod tests {
         let body = replay_response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "replayed_state");
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("already been used"));
 
         drop(client);
         pool.close().await;
@@ -746,11 +790,9 @@ mod tests {
         let body = response
             .into_string()
             .await
-            .expect("response should contain JSON");
-        let callback: CallbackResponse =
-            serde_json::from_str(body.as_str()).expect("callback response should deserialize");
-        assert_eq!(callback.status, "error");
-        assert_eq!(callback.code, "already_linked");
+            .expect("response should contain HTML");
+        assert!(body.contains("Something Went Wrong"));
+        assert!(body.contains("already linked to another Discord user"));
 
         let existing = fetch_credential_by_discord_user("existing_user", &pool)
             .await
