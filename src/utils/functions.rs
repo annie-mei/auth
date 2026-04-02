@@ -285,6 +285,7 @@ async fn mark_expired_oauth_credential_relink_required(
         "UPDATE oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
          WHERE discord_user_id = $1 \
+           AND relink_required_at IS NULL \
            AND token_expires_at IS NOT NULL \
            AND token_expires_at <= NOW()",
     )
@@ -376,10 +377,6 @@ pub async fn fetch_usable_oauth_credential(
     }
 
     if credential.relink_required_at.is_some() {
-        return Err(UsableCredentialError::RelinkRequired);
-    }
-
-    if !credential_is_expired(&credential) {
         return Err(UsableCredentialError::RelinkRequired);
     }
 
@@ -849,6 +846,58 @@ mod tests {
 
         assert!(credential.relink_required_at.is_none());
         assert!(credential.relink_reason.is_none());
+
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn mark_expired_oauth_credential_relink_required_skips_already_flagged_credentials(
+        pool: Pool<Postgres>,
+    ) {
+        upsert_oauth_credentials(
+            "already_marked_user",
+            1_000,
+            "expired_access",
+            None,
+            Some(Utc::now() - Duration::minutes(5)),
+            &pool,
+        )
+        .await
+        .expect("upsert should succeed");
+
+        mark_oauth_credentials_relink_required("already_marked_user", "token_expired", &pool)
+            .await
+            .expect("mark relink required should succeed");
+
+        let initially_flagged = fetch_credential_by_discord_user("already_marked_user", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should exist");
+
+        let initial_relink_required_at = initially_flagged
+            .relink_required_at
+            .expect("credential should already be flagged for relink");
+
+        let marked = mark_expired_oauth_credential_relink_required(
+            "already_marked_user",
+            "token_expired",
+            &pool,
+        )
+        .await
+        .expect("conditional mark should succeed");
+
+        assert!(!marked);
+
+        let credential = fetch_credential_by_discord_user("already_marked_user", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should exist");
+
+        assert_eq!(
+            credential.relink_required_at,
+            Some(initial_relink_required_at)
+        );
+        assert_eq!(credential.relink_reason.as_deref(), Some("token_expired"));
 
         pool.close().await;
     }
