@@ -4,7 +4,7 @@ pub mod routes;
 pub mod utils;
 
 use crate::{
-    routes::{authorized::authorized, start::start},
+    routes::{authorized::authorized, catchers::not_found, start::start},
     utils::{
         consts::{ANILIST_TOKEN, ANILIST_USER_BASE},
         structs::MyState,
@@ -134,6 +134,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
     Ok(rocket::custom(figment)
         .mount("/", routes![start, authorized])
         .mount("/static", FileServer::from("static"))
+        .register("/", catchers![not_found])
         .manage(state))
 }
 
