@@ -236,7 +236,9 @@ pub async fn upsert_oauth_credentials(
              access_token = EXCLUDED.access_token, \
              refresh_token = EXCLUDED.refresh_token, \
              token_expires_at = EXCLUDED.token_expires_at, \
-             token_updated_at = NOW()",
+             token_updated_at = NOW(), \
+             relink_required_at = NULL, \
+             relink_reason = NULL",
     )
     .bind(discord_user_id)
     .bind(anilist_id)
@@ -252,6 +254,24 @@ pub async fn upsert_oauth_credentials(
             UpsertOAuthCredentialsError::Db(error)
         }
     })
+    .map(|_| ())
+}
+
+#[tracing::instrument(skip(db))]
+pub async fn mark_oauth_credentials_relink_required(
+    discord_user_id: &str,
+    reason: &str,
+    db: &Pool<Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE oauth_credentials \
+         SET relink_required_at = NOW(), relink_reason = $2 \
+         WHERE discord_user_id = $1",
+    )
+    .bind(discord_user_id)
+    .bind(reason)
+    .execute(db)
+    .await
     .map(|_| ())
 }
 
@@ -271,7 +291,7 @@ pub async fn fetch_credential_by_discord_user(
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
-         token_expires_at, token_updated_at, created_at \
+         token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
          FROM oauth_credentials WHERE discord_user_id = $1",
     )
     .bind(discord_user_id)
@@ -286,7 +306,7 @@ pub async fn fetch_credential_by_anilist_id(
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
-         token_expires_at, token_updated_at, created_at \
+         token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
          FROM oauth_credentials WHERE anilist_id = $1",
     )
     .bind(anilist_id)
@@ -429,7 +449,8 @@ mod tests {
     use super::{
         OAuthContextError, SessionConsumeError, UpsertOAuthCredentialsError, consume_oauth_session,
         fetch_credential_by_anilist_id, fetch_credential_by_discord_user, insert_oauth_session,
-        token_expires_at, upsert_oauth_credentials, verify_oauth_context,
+        mark_oauth_credentials_relink_required, token_expires_at, upsert_oauth_credentials,
+        verify_oauth_context,
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::{Duration, Utc};
@@ -599,6 +620,10 @@ mod tests {
             .await
             .expect("first upsert should succeed");
 
+        mark_oauth_credentials_relink_required("user1", "token_expired", &pool)
+            .await
+            .expect("mark relink required should succeed");
+
         upsert_oauth_credentials("user1", 111, "new_token", Some("new_refresh"), None, &pool)
             .await
             .expect("second upsert should succeed");
@@ -610,6 +635,8 @@ mod tests {
 
         assert_eq!(cred.access_token, "new_token");
         assert_eq!(cred.refresh_token.as_deref(), Some("new_refresh"));
+        assert!(cred.relink_required_at.is_none());
+        assert!(cred.relink_reason.is_none());
 
         pool.close().await;
     }
