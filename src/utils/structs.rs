@@ -49,6 +49,8 @@ pub struct OAuthCredential {
     pub refresh_token: Option<String>,
     pub token_expires_at: Option<DateTime<Utc>>,
     pub token_updated_at: DateTime<Utc>,
+    pub relink_required_at: Option<DateTime<Utc>>,
+    pub relink_reason: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
