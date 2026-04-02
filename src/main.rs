@@ -10,6 +10,7 @@ use crate::{
         structs::MyState,
     },
 };
+use rocket::fs::FileServer;
 
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
@@ -132,6 +133,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
 
     Ok(rocket::custom(figment)
         .mount("/", routes![start, authorized])
+        .mount("/static", FileServer::from("static"))
         .manage(state))
 }
 

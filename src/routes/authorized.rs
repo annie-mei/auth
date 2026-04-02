@@ -186,7 +186,7 @@ fn render_page(success: bool, message: &str) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/png" href="/static/favicon.png">
 <style>
   *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
   body{{
