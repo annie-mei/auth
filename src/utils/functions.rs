@@ -275,6 +275,26 @@ pub fn credential_requires_relink(credential: &OAuthCredential) -> bool {
     credential.relink_required_at.is_some() || credential_is_expired(credential)
 }
 
+#[tracing::instrument(skip(db))]
+async fn mark_expired_oauth_credential_relink_required(
+    discord_user_id: &str,
+    reason: &str,
+    db: &Pool<Postgres>,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query(
+        "UPDATE oauth_credentials \
+         SET relink_required_at = NOW(), relink_reason = $2 \
+         WHERE discord_user_id = $1 \
+           AND token_expires_at IS NOT NULL \
+           AND token_expires_at <= NOW()",
+    )
+    .bind(discord_user_id)
+    .bind(reason)
+    .execute(db)
+    .await
+    .map(|result| result.rows_affected() > 0)
+}
+
 #[derive(Debug)]
 pub enum UsableCredentialError {
     Missing,
@@ -351,24 +371,43 @@ pub async fn fetch_usable_oauth_credential(
         return Err(UsableCredentialError::Missing);
     };
 
-    if credential.relink_required_at.is_some() {
+    if !credential_requires_relink(&credential) {
+        return Ok(credential);
+    }
+
+    if !credential_is_expired(&credential) {
         return Err(UsableCredentialError::RelinkRequired);
     }
 
-    if credential_is_expired(&credential) {
-        mark_oauth_credentials_relink_required(discord_user_id, RELINK_REASON_TOKEN_EXPIRED, db)
+    if !mark_expired_oauth_credential_relink_required(
+        discord_user_id,
+        RELINK_REASON_TOKEN_EXPIRED,
+        db,
+    )
+    .await
+    .map_err(UsableCredentialError::Db)?
+    {
+        // Another request may have completed a relink between the stale read above
+        // and the conditional mark, so re-check the current row before forcing a relink.
+        let refreshed_credential = fetch_credential_by_discord_user(discord_user_id, db)
             .await
             .map_err(UsableCredentialError::Db)?;
 
-        let sentry_message =
-            "AniList credential expired and now requires relink. User must restart /register.";
-        sentry::capture_message(sentry_message, sentry::Level::Warning);
-        warn!("{sentry_message}");
-
-        return Err(UsableCredentialError::RelinkRequired);
+        return match refreshed_credential {
+            Some(credential) if credential_requires_relink(&credential) => {
+                Err(UsableCredentialError::RelinkRequired)
+            }
+            Some(credential) => Ok(credential),
+            None => Err(UsableCredentialError::Missing),
+        };
     }
 
-    Ok(credential)
+    let sentry_message =
+        "AniList credential expired and now requires relink. User must restart /register.";
+    sentry::capture_message(sentry_message, sentry::Level::Warning);
+    warn!("{sentry_message}");
+
+    Err(UsableCredentialError::RelinkRequired)
 }
 
 pub fn get_state_token() -> String {
@@ -507,8 +546,8 @@ mod tests {
         OAuthContextError, SessionConsumeError, UpsertOAuthCredentialsError, UsableCredentialError,
         consume_oauth_session, fetch_credential_by_anilist_id, fetch_credential_by_discord_user,
         fetch_usable_oauth_credential, insert_oauth_session,
-        mark_oauth_credentials_relink_required, token_expires_at, upsert_oauth_credentials,
-        verify_oauth_context,
+        mark_expired_oauth_credential_relink_required, mark_oauth_credentials_relink_required,
+        token_expires_at, upsert_oauth_credentials, verify_oauth_context,
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::{Duration, Utc};
@@ -725,6 +764,39 @@ mod tests {
 
         assert!(credential.relink_required_at.is_some());
         assert_eq!(credential.relink_reason.as_deref(), Some("token_expired"));
+
+        pool.close().await;
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn mark_expired_oauth_credential_relink_required_skips_fresh_credentials(
+        pool: Pool<Postgres>,
+    ) {
+        upsert_oauth_credentials(
+            "race_user",
+            999,
+            "fresh_access",
+            None,
+            Some(Utc::now() + Duration::hours(2)),
+            &pool,
+        )
+        .await
+        .expect("upsert should succeed");
+
+        let marked =
+            mark_expired_oauth_credential_relink_required("race_user", "token_expired", &pool)
+                .await
+                .expect("conditional mark should succeed");
+
+        assert!(!marked);
+
+        let credential = fetch_credential_by_discord_user("race_user", &pool)
+            .await
+            .expect("fetch should not error")
+            .expect("credential should exist");
+
+        assert!(credential.relink_required_at.is_none());
+        assert!(credential.relink_reason.is_none());
 
         pool.close().await;
     }
