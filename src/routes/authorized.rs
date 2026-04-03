@@ -101,6 +101,7 @@ pub async fn authorized(
         &token_response.access_token,
         token_response.refresh_token.as_deref(),
         token_expires_at,
+        state.user_id_hash_salt.as_str(),
         &state.pool,
     )
     .await
@@ -297,6 +298,7 @@ mod tests {
     };
 
     const TEST_CONTEXT_SECRET: &str = "test-oauth-context-secret-for-unit-tests";
+    const TEST_USERID_HASH_SALT: &str = "test-userid-hash-salt";
 
     fn signed_start_url(discord_user_id: &str) -> String {
         type HmacSha256 = Hmac<Sha256>;
@@ -410,10 +412,11 @@ mod tests {
         assert!(body.contains("Account Connected"));
         assert!(body.contains("AniList account connected successfully."));
 
-        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should be persisted");
+        let persisted =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should be persisted");
 
         assert_eq!(persisted.discord_user_id, "555666777888");
         assert_eq!(persisted.anilist_id, 12345);
@@ -461,9 +464,10 @@ mod tests {
         assert!(body.contains("Something Went Wrong"));
         assert!(body.contains("invalid or expired"));
 
-        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error");
+        let persisted =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error");
         assert!(persisted.is_none());
 
         drop(client);
@@ -506,9 +510,10 @@ mod tests {
         assert!(body.contains("Something Went Wrong"));
         assert!(body.contains("AniList OAuth client configuration is invalid"));
 
-        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error");
+        let persisted =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error");
         assert!(persisted.is_none());
 
         drop(client);
@@ -551,9 +556,10 @@ mod tests {
         assert!(body.contains("Something Went Wrong"));
         assert!(body.contains("AniList is temporarily unavailable. Please try again."));
 
-        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error");
+        let persisted =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error");
         assert!(persisted.is_none());
 
         drop(client);
@@ -626,9 +632,10 @@ mod tests {
         assert!(body.contains("Something Went Wrong"));
         assert!(body.contains("Authorization was denied on AniList. Please try again."));
 
-        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error");
+        let persisted =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error");
         assert!(persisted.is_none());
 
         drop(client);
@@ -682,9 +689,10 @@ mod tests {
         assert!(body.contains("Something Went Wrong"));
         assert!(body.contains("Failed to parse AniList viewer response. Please try again."));
 
-        let persisted = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error");
+        let persisted =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error");
         assert!(persisted.is_none());
 
         drop(client);
@@ -761,9 +769,17 @@ mod tests {
     async fn authorized_rejects_anilist_account_linked_to_another_discord_user(
         pool: Pool<Postgres>,
     ) {
-        upsert_oauth_credentials("existing_user", 12345, "existing_access", None, None, &pool)
-            .await
-            .expect("seed upsert should succeed");
+        upsert_oauth_credentials(
+            "existing_user",
+            12345,
+            "existing_access",
+            None,
+            None,
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("seed upsert should succeed");
 
         let mock_server = MockServer::start().await;
 
@@ -810,15 +826,17 @@ mod tests {
         assert!(body.contains("Something Went Wrong"));
         assert!(body.contains("already linked to another Discord user"));
 
-        let existing = fetch_credential_by_discord_user("existing_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("existing credential should remain");
+        let existing =
+            fetch_credential_by_discord_user("existing_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("existing credential should remain");
         assert_eq!(existing.access_token, "existing_access");
 
-        let conflicting = fetch_credential_by_discord_user("555666777888", &pool)
-            .await
-            .expect("fetch should not error");
+        let conflicting =
+            fetch_credential_by_discord_user("555666777888", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error");
         assert!(conflicting.is_none());
 
         drop(client);

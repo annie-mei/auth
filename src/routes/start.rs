@@ -46,6 +46,7 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
         &state_token,
         &payload.discord_user_id,
         state.state_ttl_seconds,
+        state.user_id_hash_salt.as_str(),
         &state.pool,
     )
     .await
