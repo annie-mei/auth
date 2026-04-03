@@ -20,12 +20,14 @@ src/
 |- routes/
 |  |- start.rs          # /oauth/anilist/start redirect to AniList OAuth
 |  |- authorized.rs     # /oauth/anilist/callback token exchange + HTML pages
+|  |- healthz.rs        # /healthz dependency-aware health check endpoint
 |  |- catchers.rs       # Custom error catchers (404, etc.)
 |  `- mod.rs
 `- utils/
    |- consts.rs         # AniList endpoint constants
    |- functions.rs      # token generation, AniList fetch, DB helpers
    |- guards.rs         # Rocket request guard for state validation
+   |- observability.rs  # fingerprinting and Sentry scope helpers
    |- structs.rs        # app state + request/response types
    `- mod.rs
 static/
@@ -137,6 +139,7 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 - `ANILIST_CLIENT_SECRET`
 - `ANILIST_REDIRECT_URI`
 - `OAUTH_CONTEXT_SIGNING_SECRET`
+- `USERID_HASH_SALT`
 - `OAUTH_CONTEXT_TTL_SECONDS`
 - `OAUTH_STATE_TTL_SECONDS`
 - `DATABASE_URL`
