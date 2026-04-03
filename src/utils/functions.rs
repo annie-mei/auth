@@ -109,7 +109,7 @@ pub async fn fetch_viewer_id(
                         scope,
                         "oauth.callback.fetch_viewer_id",
                         discord_user_fingerprint,
-                    )
+                    );
                 },
                 || sentry::capture_error(&e),
             );
@@ -126,7 +126,7 @@ pub async fn fetch_viewer_id(
                         scope,
                         "oauth.callback.fetch_viewer_id",
                         discord_user_fingerprint,
-                    )
+                    );
                 },
                 || sentry::capture_error(&e),
             );
@@ -146,7 +146,7 @@ pub async fn fetch_viewer_id(
                         scope,
                         "oauth.callback.fetch_viewer_id",
                         discord_user_fingerprint,
-                    )
+                    );
                 },
                 || sentry::capture_error(&e),
             );
@@ -187,7 +187,7 @@ pub async fn exchange_code_for_token(
                         scope,
                         "oauth.callback.exchange_code_for_token",
                         discord_user_fingerprint,
-                    )
+                    );
                 },
                 || sentry::capture_error(&e),
             );
@@ -205,7 +205,7 @@ pub async fn exchange_code_for_token(
                         scope,
                         "oauth.callback.exchange_code_for_token",
                         discord_user_fingerprint,
-                    )
+                    );
                 },
                 || sentry::capture_error(&e),
             );

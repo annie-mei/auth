@@ -42,7 +42,9 @@ impl<'r> FromRequest<'r> for StateToken {
             Err(SessionConsumeError::AlreadyUsed) => {
                 info!("State validation failed: replay attempt detected");
                 sentry::with_scope(
-                    |scope| configure_oauth_scope(scope, "oauth.state.consume_session", None),
+                    |scope| {
+                        configure_oauth_scope(scope, "oauth.state.consume_session", None);
+                    },
                     || {
                         sentry::capture_message(
                             "OAuth state replay attempt detected",
@@ -54,7 +56,9 @@ impl<'r> FromRequest<'r> for StateToken {
             }
             Err(SessionConsumeError::Db(e)) => {
                 sentry::with_scope(
-                    |scope| configure_oauth_scope(scope, "oauth.state.consume_session", None),
+                    |scope| {
+                        configure_oauth_scope(scope, "oauth.state.consume_session", None);
+                    },
                     || sentry::capture_error(&e),
                 );
                 error!("Database error during state validation");
