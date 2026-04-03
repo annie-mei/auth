@@ -3,6 +3,7 @@ use crate::utils::{
         UpsertOAuthCredentialsError, exchange_code_for_token, fetch_viewer_id, token_expires_at,
         upsert_oauth_credentials,
     },
+    observability::{configure_oauth_scope, identifier_fingerprint},
     structs::{MyState, StateToken, StateTokenError},
 };
 
@@ -13,7 +14,15 @@ use rocket::{
 };
 
 #[get("/oauth/anilist/callback?<code>&<error>&<error_description>")]
-#[tracing::instrument(name = "authorized", skip_all, fields(discord_user_id))]
+#[tracing::instrument(
+    name = "oauth.callback",
+    skip_all,
+    fields(
+        discord_user_fingerprint = tracing::field::Empty,
+        anilist_id = tracing::field::Empty,
+        oauth_error_code = tracing::field::Empty
+    )
+)]
 pub async fn authorized(
     code: Option<&str>,
     error: Option<&str>,
@@ -21,25 +30,21 @@ pub async fn authorized(
     state_token: Result<StateToken, StateTokenError>,
     state: &State<MyState>,
 ) -> Custom<RawHtml<String>> {
+    let span = tracing::Span::current();
     let state_token = match state_token {
         Ok(state_token) => state_token,
         Err(error) => return callback_error_for_state_token(error),
     };
 
-    tracing::Span::current().record("discord_user_id", state_token.0.as_str());
-    info!("State token validated; beginning token exchange");
-
-    sentry::configure_scope(|scope| {
-        scope.set_user(Some(sentry::User {
-            id: Some(state_token.0.clone()),
-            ..Default::default()
-        }));
-    });
+    let discord_user_fingerprint = identifier_fingerprint(&state_token.0);
+    span.record("discord_user_fingerprint", &discord_user_fingerprint);
+    info!("State token validated; beginning AniList token exchange");
 
     if let Some(error_code) = error {
+        span.record("oauth_error_code", error_code);
+        let has_error_description = error_description.is_some();
         info!(
-            "AniList callback returned an OAuth error: {error_code} ({})",
-            error_description.unwrap_or("<missing>")
+            "AniList callback returned an OAuth error (code: {error_code}, has_description: {has_error_description})"
         );
         let message = match error_code {
             "access_denied" => "Authorization was denied on AniList. Please try again.",
@@ -68,6 +73,16 @@ pub async fn authorized(
     {
         Ok(response) => response,
         Err(error) => {
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.exchange_code_for_token",
+                        Some(&state_token.0),
+                    );
+                },
+                || sentry::capture_message(error.message(), sentry::Level::Warning),
+            );
             return callback_error(error.message(), error.status());
         }
     };
@@ -82,8 +97,21 @@ pub async fn authorized(
     )
     .await
     {
-        Ok(user_id) => user_id,
+        Ok(user_id) => {
+            span.record("anilist_id", user_id);
+            user_id
+        }
         Err(error) => {
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        Some(&state_token.0),
+                    );
+                },
+                || sentry::capture_message(error.message(), sentry::Level::Warning),
+            );
             return callback_error(error.message(), error.status());
         }
     };
@@ -105,7 +133,16 @@ pub async fn authorized(
                 Status::BadRequest,
             ),
             UpsertOAuthCredentialsError::Db(error) => {
-                sentry::capture_error(&error);
+                sentry::with_scope(
+                    |scope| {
+                        configure_oauth_scope(
+                            scope,
+                            "oauth.callback.upsert_oauth_credentials",
+                            Some(&state_token.0),
+                        );
+                    },
+                    || sentry::capture_error(&error),
+                );
                 error!("Failed to persist AniList credentials");
                 callback_error(
                     "Failed to save AniList credentials. Please retry.",

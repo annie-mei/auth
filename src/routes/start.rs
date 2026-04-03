@@ -21,9 +21,9 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
         &state.context_signing_secret,
         state.context_ttl_seconds,
     )
-    .map_err(|error| {
+    .map_err(|_| {
         span.record("context_valid", false);
-        info!("OAuth start rejected: invalid or expired context: {error:?}");
+        info!("OAuth start rejected: invalid or expired context");
         BadRequest("Invalid or expired OAuth context".to_string())
     })?;
     span.record("context_valid", true);

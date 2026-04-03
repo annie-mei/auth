@@ -5,6 +5,7 @@ use rocket::{
 
 use super::structs::{MyState, StateToken, StateTokenError};
 use crate::utils::functions::{SessionConsumeError, consume_oauth_session};
+use crate::utils::observability::configure_oauth_scope;
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for StateToken {
@@ -13,8 +14,8 @@ impl<'r> FromRequest<'r> for StateToken {
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         let state_val = match req.query_value::<&str>("state") {
             None => return Outcome::Error((Status::BadRequest, StateTokenError::Missing)),
-            Some(Err(e)) => {
-                info!("Failed to parse state query parameter: {e:?}");
+            Some(Err(_)) => {
+                info!("Failed to parse state query parameter");
                 return Outcome::Error((Status::BadRequest, StateTokenError::Invalid));
             }
             Some(Ok(s)) => s,
@@ -40,15 +41,23 @@ impl<'r> FromRequest<'r> for StateToken {
             }
             Err(SessionConsumeError::AlreadyUsed) => {
                 info!("State validation failed: replay attempt detected");
-                sentry::capture_message(
-                    "OAuth state replay attempt detected",
-                    sentry::Level::Warning,
+                sentry::with_scope(
+                    |scope| configure_oauth_scope(scope, "oauth.state.consume_session", None),
+                    || {
+                        sentry::capture_message(
+                            "OAuth state replay attempt detected",
+                            sentry::Level::Warning,
+                        )
+                    },
                 );
                 Outcome::Error((Status::BadRequest, StateTokenError::Replayed))
             }
             Err(SessionConsumeError::Db(e)) => {
-                sentry::capture_error(&e);
-                error!("Database error during state validation: {e}");
+                sentry::with_scope(
+                    |scope| configure_oauth_scope(scope, "oauth.state.consume_session", None),
+                    || sentry::capture_error(&e),
+                );
+                error!("Database error during state validation");
                 Outcome::Error((Status::InternalServerError, StateTokenError::Internal))
             }
         }
