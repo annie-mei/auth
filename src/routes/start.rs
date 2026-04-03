@@ -1,6 +1,7 @@
 use crate::utils::{
     consts::ANILIST_AUTH,
     functions::{get_state_token, insert_oauth_session, verify_oauth_context},
+    observability::{configure_oauth_scope, identifier_fingerprint},
     structs::MyState,
 };
 
@@ -8,17 +9,27 @@ use rocket::{State, response::Redirect, response::status::BadRequest};
 use url::Url;
 
 #[get("/oauth/anilist/start?<ctx>")]
-#[tracing::instrument(name = "oauth.start", skip(state, ctx))]
+#[tracing::instrument(
+    name = "oauth.start",
+    skip(state, ctx),
+    fields(discord_user_fingerprint = tracing::field::Empty, context_valid = tracing::field::Empty)
+)]
 pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadRequest<String>> {
+    let span = tracing::Span::current();
     let payload = verify_oauth_context(
         ctx,
         &state.context_signing_secret,
         state.context_ttl_seconds,
     )
     .map_err(|error| {
+        span.record("context_valid", false);
         info!("OAuth start rejected: invalid or expired context: {error:?}");
         BadRequest("Invalid or expired OAuth context".to_string())
     })?;
+    span.record("context_valid", true);
+
+    let discord_user_fingerprint = identifier_fingerprint(&payload.discord_user_id);
+    span.record("discord_user_fingerprint", &discord_user_fingerprint);
 
     let state_token = get_state_token();
     let params = [
@@ -38,12 +49,21 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
     )
     .await
     .map_err(|e| {
-        sentry::capture_error(&e);
-        error!("Failed to create OAuth session: {e}");
+        sentry::with_scope(
+            |scope| {
+                configure_oauth_scope(
+                    scope,
+                    "oauth.start.create_session",
+                    Some(&payload.discord_user_id),
+                );
+            },
+            || sentry::capture_error(&e),
+        );
+        error!("Failed to create OAuth session");
         BadRequest("Failed to create OAuth session. Please try again.".to_string())
     })?;
 
-    info!("Created OAuth session for Discord user");
+    info!("Created OAuth session");
     Ok(Redirect::to(url.to_string()))
 }
 
