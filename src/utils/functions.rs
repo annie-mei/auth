@@ -451,11 +451,11 @@ pub async fn fetch_credential_by_anilist_id(
     anilist_id: i64,
     db: &Pool<Postgres>,
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
-    let anilist_id = anilist_id.to_string();
+    let anilist_fingerprint_source = anilist_id.to_string();
     record_identifier_fingerprint(
         &tracing::Span::current(),
         "anilist_fingerprint",
-        &anilist_id,
+        &anilist_fingerprint_source,
     );
 
     sqlx::query_as::<_, OAuthCredential>(
