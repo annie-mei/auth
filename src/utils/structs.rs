@@ -7,6 +7,7 @@ pub struct MyState {
     pub client_secret: String,
     pub redirect_uri: String,
     pub context_signing_secret: String,
+    pub user_id_hash_salt: String,
     pub context_ttl_seconds: i64,
     pub state_ttl_seconds: i64,
     pub token_endpoint: String,

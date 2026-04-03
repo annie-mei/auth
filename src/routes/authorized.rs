@@ -36,7 +36,7 @@ pub async fn authorized(
         Err(error) => return callback_error_for_state_token(error),
     };
 
-    let discord_user_fingerprint = identifier_fingerprint(&state_token.0);
+    let discord_user_fingerprint = identifier_fingerprint(&state_token.0, &state.user_id_hash_salt);
     span.record("discord_user_fingerprint", &discord_user_fingerprint);
     info!("State token validated; beginning AniList token exchange");
 
@@ -78,7 +78,7 @@ pub async fn authorized(
                     configure_oauth_scope(
                         scope,
                         "oauth.callback.exchange_code_for_token",
-                        Some(&state_token.0),
+                        Some(discord_user_fingerprint.as_str()),
                     );
                 },
                 || sentry::capture_message(error.message(), sentry::Level::Warning),
@@ -107,7 +107,7 @@ pub async fn authorized(
                     configure_oauth_scope(
                         scope,
                         "oauth.callback.fetch_viewer_id",
-                        Some(&state_token.0),
+                        Some(discord_user_fingerprint.as_str()),
                     );
                 },
                 || sentry::capture_message(error.message(), sentry::Level::Warning),
@@ -138,7 +138,7 @@ pub async fn authorized(
                         configure_oauth_scope(
                             scope,
                             "oauth.callback.upsert_oauth_credentials",
-                            Some(&state_token.0),
+                            Some(discord_user_fingerprint.as_str()),
                         );
                     },
                     || sentry::capture_error(&error),
@@ -354,6 +354,7 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
             context_signing_secret: TEST_CONTEXT_SECRET.to_string(),
+            user_id_hash_salt: "test-userid-hash-salt".to_string(),
             context_ttl_seconds: 300,
             state_ttl_seconds: 600,
             token_endpoint,

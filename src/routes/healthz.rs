@@ -35,8 +35,7 @@ pub async fn healthz(state: &State<MyState>) -> Custom<Json<HealthResponse<'stat
             }),
         ),
         Err(error) => {
-            sentry::capture_error(&error);
-            error!("Health check failed for database dependency");
+            error!("Health check failed for database dependency: {error}");
 
             Custom(
                 Status::ServiceUnavailable,
@@ -65,6 +64,7 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
             context_signing_secret: "context-signing-secret".to_string(),
+            user_id_hash_salt: "test-userid-hash-salt".to_string(),
             context_ttl_seconds: 300,
             state_ttl_seconds: 600,
             token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),

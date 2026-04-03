@@ -1,28 +1,20 @@
-use sha2::{Digest, Sha256};
+const IDENTIFIER_FINGERPRINT_HEX_LEN: usize = 16;
 
-const IDENTIFIER_FINGERPRINT_BYTES: usize = 6;
-
-pub fn identifier_fingerprint(identifier: &str) -> String {
-    let digest = Sha256::digest(identifier.as_bytes());
-    digest[..IDENTIFIER_FINGERPRINT_BYTES]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+pub fn identifier_fingerprint(identifier: &str, salt: &str) -> String {
+    let digest = blake3::hash(format!("{salt}{identifier}").as_bytes());
+    digest.to_hex()[..IDENTIFIER_FINGERPRINT_HEX_LEN].to_string()
 }
 
 pub fn configure_oauth_scope(
     scope: &mut sentry::Scope,
     operation: &str,
-    discord_user_id: Option<&str>,
+    discord_user_fingerprint: Option<&str>,
 ) {
     scope.set_tag("service", "annie-mei-auth");
     scope.set_tag("oauth.operation", operation);
 
-    if let Some(discord_user_id) = discord_user_id {
-        scope.set_tag(
-            "oauth.discord_user_fingerprint",
-            identifier_fingerprint(discord_user_id),
-        );
+    if let Some(discord_user_fingerprint) = discord_user_fingerprint {
+        scope.set_tag("oauth.discord_user_fingerprint", discord_user_fingerprint);
     }
 }
 
@@ -32,17 +24,25 @@ mod tests {
 
     #[test]
     fn identifier_fingerprint_is_stable() {
-        let first = identifier_fingerprint("1234567890");
-        let second = identifier_fingerprint("1234567890");
+        let first = identifier_fingerprint("1234567890", "shared-salt");
+        let second = identifier_fingerprint("1234567890", "shared-salt");
         assert_eq!(first, second);
-        assert_eq!(first.len(), 12);
+        assert_eq!(first.len(), 16);
     }
 
     #[test]
     fn identifier_fingerprint_changes_with_input() {
         assert_ne!(
-            identifier_fingerprint("1234567890"),
-            identifier_fingerprint("1234567891")
+            identifier_fingerprint("1234567890", "shared-salt"),
+            identifier_fingerprint("1234567891", "shared-salt")
+        );
+    }
+
+    #[test]
+    fn identifier_fingerprint_changes_with_salt() {
+        assert_ne!(
+            identifier_fingerprint("1234567890", "salt-one"),
+            identifier_fingerprint("1234567890", "salt-two")
         );
     }
 }

@@ -28,7 +28,8 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
     })?;
     span.record("context_valid", true);
 
-    let discord_user_fingerprint = identifier_fingerprint(&payload.discord_user_id);
+    let discord_user_fingerprint =
+        identifier_fingerprint(&payload.discord_user_id, &state.user_id_hash_salt);
     span.record("discord_user_fingerprint", &discord_user_fingerprint);
 
     let state_token = get_state_token();
@@ -54,7 +55,7 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
                 configure_oauth_scope(
                     scope,
                     "oauth.start.create_session",
-                    Some(&payload.discord_user_id),
+                    Some(discord_user_fingerprint.as_str()),
                 );
             },
             || sentry::capture_error(&e),
@@ -123,6 +124,7 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
             context_signing_secret: TEST_CONTEXT_SECRET.to_string(),
+            user_id_hash_salt: "test-userid-hash-salt".to_string(),
             context_ttl_seconds: 300,
             state_ttl_seconds: 600,
             token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
@@ -145,6 +147,7 @@ mod tests {
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
             context_signing_secret: TEST_CONTEXT_SECRET.to_string(),
+            user_id_hash_salt: "test-userid-hash-salt".to_string(),
             context_ttl_seconds: 300,
             state_ttl_seconds: 600,
             token_endpoint: "https://anilist.co/api/v2/oauth/token".to_string(),
