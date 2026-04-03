@@ -1,4 +1,6 @@
-use crate::utils::observability::configure_oauth_scope;
+use crate::utils::observability::{
+    configure_oauth_scope, identifier_fingerprint_from_env, record_identifier_fingerprint,
+};
 use crate::utils::structs::{
     OAuthContextPayload, OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse,
     ViewerResponse,
@@ -344,12 +346,21 @@ pub fn credential_requires_relink(credential: &OAuthCredential) -> bool {
     credential.relink_required_at.is_some() || credential_is_expired(credential)
 }
 
-#[tracing::instrument(skip(db, discord_user_id))]
+#[tracing::instrument(
+    skip(db, discord_user_id),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 async fn mark_expired_oauth_credential_relink_required(
     discord_user_id: &str,
     reason: &str,
     db: &Pool<Postgres>,
 ) -> Result<bool, sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+    );
+
     sqlx::query(
         "UPDATE oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
@@ -372,12 +383,21 @@ pub enum UsableCredentialError {
     Db(sqlx::Error),
 }
 
-#[tracing::instrument(skip(db, discord_user_id))]
+#[tracing::instrument(
+    skip(db, discord_user_id),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn mark_oauth_credentials_relink_required(
     discord_user_id: &str,
     reason: &str,
     db: &Pool<Postgres>,
 ) -> Result<(), sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+    );
+
     sqlx::query(
         "UPDATE oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
@@ -399,11 +419,20 @@ fn is_anilist_id_conflict(error: &sqlx::Error) -> bool {
     }
 }
 
-#[tracing::instrument(skip(db, discord_user_id))]
+#[tracing::instrument(
+    skip(db, discord_user_id),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn fetch_credential_by_discord_user(
     discord_user_id: &str,
     db: &Pool<Postgres>,
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+    );
+
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
@@ -414,11 +443,21 @@ pub async fn fetch_credential_by_discord_user(
     .await
 }
 
-#[tracing::instrument(skip(db, anilist_id))]
+#[tracing::instrument(
+    skip(db, anilist_id),
+    fields(anilist_fingerprint = tracing::field::Empty)
+)]
 pub async fn fetch_credential_by_anilist_id(
     anilist_id: i64,
     db: &Pool<Postgres>,
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
+    let anilist_id = anilist_id.to_string();
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "anilist_fingerprint",
+        &anilist_id,
+    );
+
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
@@ -429,11 +468,22 @@ pub async fn fetch_credential_by_anilist_id(
     .await
 }
 
-#[tracing::instrument(skip(db, discord_user_id))]
+#[tracing::instrument(
+    skip(db, discord_user_id),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn fetch_usable_oauth_credential(
     discord_user_id: &str,
     db: &Pool<Postgres>,
 ) -> Result<OAuthCredential, UsableCredentialError> {
+    let discord_user_fingerprint = identifier_fingerprint_from_env(discord_user_id);
+    if let Some(discord_user_fingerprint) = &discord_user_fingerprint {
+        tracing::Span::current().record(
+            "discord_user_fingerprint",
+            tracing::field::display(discord_user_fingerprint),
+        );
+    }
+
     let Some(credential) = fetch_credential_by_discord_user(discord_user_id, db)
         .await
         .map_err(UsableCredentialError::Db)?
@@ -474,7 +524,11 @@ pub async fn fetch_usable_oauth_credential(
 
     sentry::with_scope(
         |scope| {
-            configure_oauth_scope(scope, "oauth.credentials.fetch_usable", None);
+            configure_oauth_scope(
+                scope,
+                "oauth.credentials.fetch_usable",
+                discord_user_fingerprint.as_deref(),
+            );
             scope.set_tag("oauth.relink_reason", RELINK_REASON_TOKEN_EXPIRED);
         },
         || {

@@ -1,8 +1,23 @@
+use std::env;
+
 const IDENTIFIER_FINGERPRINT_HEX_LEN: usize = 16;
+const USERID_HASH_SALT_ENV: &str = "USERID_HASH_SALT";
 
 pub fn identifier_fingerprint(identifier: &str, salt: &str) -> String {
     let digest = blake3::hash(format!("{salt}{identifier}").as_bytes());
     digest.to_hex()[..IDENTIFIER_FINGERPRINT_HEX_LEN].to_string()
+}
+
+pub fn identifier_fingerprint_from_env(identifier: &str) -> Option<String> {
+    env::var(USERID_HASH_SALT_ENV)
+        .ok()
+        .map(|salt| identifier_fingerprint(identifier, &salt))
+}
+
+pub fn record_identifier_fingerprint(span: &tracing::Span, field: &str, identifier: &str) {
+    if let Some(fingerprint) = identifier_fingerprint_from_env(identifier) {
+        span.record(field, tracing::field::display(fingerprint));
+    }
 }
 
 pub fn configure_oauth_scope(
@@ -15,6 +30,10 @@ pub fn configure_oauth_scope(
 
     if let Some(discord_user_fingerprint) = discord_user_fingerprint {
         scope.set_tag("oauth.discord_user_fingerprint", discord_user_fingerprint);
+        scope.set_user(Some(sentry::User {
+            id: Some(discord_user_fingerprint.to_string()),
+            ..Default::default()
+        }));
     }
 }
 

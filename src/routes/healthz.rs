@@ -34,8 +34,8 @@ pub async fn healthz(state: &State<MyState>) -> Custom<Json<HealthResponse<'stat
                 checks: HealthChecks { database: "ok" },
             }),
         ),
-        Err(error) => {
-            error!("Health check failed for database dependency: {error}");
+        Err(_) => {
+            error!("Health check failed for database dependency");
 
             Custom(
                 Status::ServiceUnavailable,
