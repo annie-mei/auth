@@ -84,6 +84,7 @@ pub async fn fetch_viewer_id(
     client: &reqwest::Client,
     user_endpoint: &str,
     access_token: &str,
+    discord_user_fingerprint: Option<&str>,
 ) -> Result<i64, ViewerFetchError> {
     const USER_QUERY: &str = "
     query {
@@ -101,7 +102,13 @@ pub async fn fetch_viewer_id(
         .await
         .map_err(|e| {
             sentry::with_scope(
-                |scope| configure_oauth_scope(scope, "oauth.callback.fetch_viewer_id", None),
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        discord_user_fingerprint,
+                    )
+                },
                 || sentry::capture_error(&e),
             );
             error!("Failed to fetch AniList viewer");
@@ -112,7 +119,13 @@ pub async fn fetch_viewer_id(
         .error_for_status()
         .map_err(|e| {
             sentry::with_scope(
-                |scope| configure_oauth_scope(scope, "oauth.callback.fetch_viewer_id", None),
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        discord_user_fingerprint,
+                    )
+                },
                 || sentry::capture_error(&e),
             );
             error!("AniList viewer request failed");
@@ -126,7 +139,13 @@ pub async fn fetch_viewer_id(
         .await
         .map_err(|e| {
             sentry::with_scope(
-                |scope| configure_oauth_scope(scope, "oauth.callback.fetch_viewer_id", None),
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        discord_user_fingerprint,
+                    )
+                },
                 || sentry::capture_error(&e),
             );
             error!("Failed to parse AniList viewer");
@@ -146,6 +165,7 @@ pub async fn exchange_code_for_token(
     client_secret: &str,
     redirect_uri: &str,
     code: &str,
+    discord_user_fingerprint: Option<&str>,
 ) -> Result<TokenResponse, TokenExchangeError> {
     let response = client
         .post(token_endpoint)
@@ -161,7 +181,11 @@ pub async fn exchange_code_for_token(
         .map_err(|e| {
             sentry::with_scope(
                 |scope| {
-                    configure_oauth_scope(scope, "oauth.callback.exchange_code_for_token", None)
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.exchange_code_for_token",
+                        discord_user_fingerprint,
+                    )
                 },
                 || sentry::capture_error(&e),
             );
@@ -175,7 +199,11 @@ pub async fn exchange_code_for_token(
         return response.json::<TokenResponse>().await.map_err(|e| {
             sentry::with_scope(
                 |scope| {
-                    configure_oauth_scope(scope, "oauth.callback.exchange_code_for_token", None)
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.exchange_code_for_token",
+                        discord_user_fingerprint,
+                    )
                 },
                 || sentry::capture_error(&e),
             );
@@ -222,7 +250,11 @@ pub async fn exchange_code_for_token(
         };
         sentry::with_scope(
             |scope| {
-                configure_oauth_scope(scope, "oauth.callback.exchange_code_for_token", None);
+                configure_oauth_scope(
+                    scope,
+                    "oauth.callback.exchange_code_for_token",
+                    discord_user_fingerprint,
+                );
                 scope.set_tag("oauth.upstream_status_code", status.as_u16().to_string());
                 scope.set_tag("oauth.upstream_error_code", upstream_error_code);
             },
@@ -238,13 +270,11 @@ pub async fn exchange_code_for_token(
             status.as_u16(),
             upstream_error_code
         );
+
+        return Err(TokenExchangeError::BadGateway(friendly_message.to_string()));
     }
 
-    if is_upstream_failure {
-        Err(TokenExchangeError::BadGateway(friendly_message.to_string()))
-    } else {
-        Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
-    }
+    Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
 }
 
 pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>> {

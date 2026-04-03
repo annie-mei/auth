@@ -68,23 +68,12 @@ pub async fn authorized(
         state.client_secret.as_str(),
         state.redirect_uri.as_str(),
         code,
+        Some(discord_user_fingerprint.as_str()),
     )
     .await
     {
         Ok(response) => response,
-        Err(error) => {
-            sentry::with_scope(
-                |scope| {
-                    configure_oauth_scope(
-                        scope,
-                        "oauth.callback.exchange_code_for_token",
-                        Some(discord_user_fingerprint.as_str()),
-                    );
-                },
-                || sentry::capture_message(error.message(), sentry::Level::Warning),
-            );
-            return callback_error(error.message(), error.status());
-        }
+        Err(error) => return callback_error(error.message(), error.status()),
     };
 
     let token_expires_at = token_expires_at(token_response.expires_in);
@@ -94,6 +83,7 @@ pub async fn authorized(
         &state.client,
         state.user_endpoint.as_str(),
         &token_response.access_token,
+        Some(discord_user_fingerprint.as_str()),
     )
     .await
     {
@@ -101,19 +91,7 @@ pub async fn authorized(
             span.record("anilist_id", user_id);
             user_id
         }
-        Err(error) => {
-            sentry::with_scope(
-                |scope| {
-                    configure_oauth_scope(
-                        scope,
-                        "oauth.callback.fetch_viewer_id",
-                        Some(discord_user_fingerprint.as_str()),
-                    );
-                },
-                || sentry::capture_message(error.message(), sentry::Level::Warning),
-            );
-            return callback_error(error.message(), error.status());
-        }
+        Err(error) => return callback_error(error.message(), error.status()),
     };
     info!("User data fetched successfully");
 
