@@ -1,3 +1,4 @@
+use crate::utils::observability::configure_oauth_scope;
 use crate::utils::structs::{
     OAuthContextPayload, OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse,
     ViewerResponse,
@@ -99,16 +100,22 @@ pub async fn fetch_viewer_id(
         .send()
         .await
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("Failed to fetch AniList viewer: {e}");
+            sentry::with_scope(
+                |scope| configure_oauth_scope(scope, "oauth.callback.fetch_viewer_id", None),
+                || sentry::capture_error(&e),
+            );
+            error!("Failed to fetch AniList viewer");
             ViewerFetchError::BadGateway(
                 "Failed to fetch AniList viewer. Please try again.".to_string(),
             )
         })?
         .error_for_status()
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("AniList viewer request failed: {e}");
+            sentry::with_scope(
+                |scope| configure_oauth_scope(scope, "oauth.callback.fetch_viewer_id", None),
+                || sentry::capture_error(&e),
+            );
+            error!("AniList viewer request failed");
             ViewerFetchError::BadGateway(
                 "AniList viewer request failed. Please try again.".to_string(),
             )
@@ -118,8 +125,11 @@ pub async fn fetch_viewer_id(
         .json::<ViewerResponse>()
         .await
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("Failed to parse AniList viewer: {e}");
+            sentry::with_scope(
+                |scope| configure_oauth_scope(scope, "oauth.callback.fetch_viewer_id", None),
+                || sentry::capture_error(&e),
+            );
+            error!("Failed to parse AniList viewer");
             ViewerFetchError::BadGateway(
                 "Failed to parse AniList viewer response. Please try again.".to_string(),
             )
@@ -149,8 +159,13 @@ pub async fn exchange_code_for_token(
         .send()
         .await
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("AniList token exchange request failed: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(scope, "oauth.callback.exchange_code_for_token", None)
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("AniList token exchange request failed");
             TokenExchangeError::BadGateway(
                 "AniList token exchange request failed. Please try again.".to_string(),
             )
@@ -158,8 +173,13 @@ pub async fn exchange_code_for_token(
 
     if response.status().is_success() {
         return response.json::<TokenResponse>().await.map_err(|e| {
-            sentry::capture_error(&e);
-            error!("Failed to parse AniList token response: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(scope, "oauth.callback.exchange_code_for_token", None)
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("Failed to parse AniList token response");
             TokenExchangeError::BadGateway(
                 "Failed to parse AniList token response. Please try again.".to_string(),
             )
@@ -192,13 +212,32 @@ pub async fn exchange_code_for_token(
         || matches!(error_payload.as_str(), "invalid_client" | "invalid_request");
 
     if is_upstream_failure {
-        let sentry_message = format!(
-            "AniList token exchange returned upstream status {} with payload: {}",
-            status.as_u16(),
-            error_payload
+        let upstream_error_code = match error_payload.as_str() {
+            "access_denied" => "access_denied",
+            "invalid_grant" => "invalid_grant",
+            "invalid_client" => "invalid_client",
+            "invalid_request" => "invalid_request",
+            "server_error" => "server_error",
+            _ => "other",
+        };
+        sentry::with_scope(
+            |scope| {
+                configure_oauth_scope(scope, "oauth.callback.exchange_code_for_token", None);
+                scope.set_tag("oauth.upstream_status_code", status.as_u16().to_string());
+                scope.set_tag("oauth.upstream_error_code", upstream_error_code);
+            },
+            || {
+                sentry::capture_message(
+                    "AniList token exchange returned upstream failure",
+                    sentry::Level::Error,
+                )
+            },
         );
-        sentry::capture_message(&sentry_message, sentry::Level::Error);
-        error!("{sentry_message}");
+        error!(
+            "AniList token exchange returned upstream failure (status: {}, code: {})",
+            status.as_u16(),
+            upstream_error_code
+        );
     }
 
     if is_upstream_failure {
@@ -218,7 +257,7 @@ pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>
     Some(Utc::now() + Duration::seconds(expires_in_seconds))
 }
 
-#[tracing::instrument(skip(access_token, refresh_token, db))]
+#[tracing::instrument(skip(access_token, refresh_token, discord_user_id, db))]
 pub async fn upsert_oauth_credentials(
     discord_user_id: &str,
     anilist_id: i64,
@@ -275,7 +314,7 @@ pub fn credential_requires_relink(credential: &OAuthCredential) -> bool {
     credential.relink_required_at.is_some() || credential_is_expired(credential)
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(db, discord_user_id))]
 async fn mark_expired_oauth_credential_relink_required(
     discord_user_id: &str,
     reason: &str,
@@ -303,7 +342,7 @@ pub enum UsableCredentialError {
     Db(sqlx::Error),
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(db, discord_user_id))]
 pub async fn mark_oauth_credentials_relink_required(
     discord_user_id: &str,
     reason: &str,
@@ -330,7 +369,7 @@ fn is_anilist_id_conflict(error: &sqlx::Error) -> bool {
     }
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(db, discord_user_id))]
 pub async fn fetch_credential_by_discord_user(
     discord_user_id: &str,
     db: &Pool<Postgres>,
@@ -345,7 +384,7 @@ pub async fn fetch_credential_by_discord_user(
     .await
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(db, anilist_id))]
 pub async fn fetch_credential_by_anilist_id(
     anilist_id: i64,
     db: &Pool<Postgres>,
@@ -360,7 +399,7 @@ pub async fn fetch_credential_by_anilist_id(
     .await
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(skip(db, discord_user_id))]
 pub async fn fetch_usable_oauth_credential(
     discord_user_id: &str,
     db: &Pool<Postgres>,
@@ -403,10 +442,19 @@ pub async fn fetch_usable_oauth_credential(
         };
     }
 
-    let sentry_message =
-        "AniList credential expired and now requires relink. User must restart /register.";
-    sentry::capture_message(sentry_message, sentry::Level::Warning);
-    warn!("{sentry_message}");
+    sentry::with_scope(
+        |scope| {
+            configure_oauth_scope(scope, "oauth.credentials.fetch_usable", None);
+            scope.set_tag("oauth.relink_reason", RELINK_REASON_TOKEN_EXPIRED);
+        },
+        || {
+            sentry::capture_message(
+                "AniList credential expired and now requires relink",
+                sentry::Level::Warning,
+            )
+        },
+    );
+    warn!("AniList credential expired and now requires relink");
 
     Err(UsableCredentialError::RelinkRequired)
 }
@@ -476,7 +524,7 @@ pub fn verify_oauth_context(
     Ok(payload)
 }
 
-#[tracing::instrument(skip(state, db))]
+#[tracing::instrument(skip(state, db, discord_user_id))]
 pub async fn insert_oauth_session(
     state: &str,
     discord_user_id: &str,
