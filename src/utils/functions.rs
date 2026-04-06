@@ -1,3 +1,6 @@
+use crate::utils::observability::{
+    configure_oauth_scope, identifier_fingerprint, record_identifier_fingerprint,
+};
 use crate::utils::structs::{
     OAuthContextPayload, OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse,
     ViewerResponse,
@@ -83,6 +86,7 @@ pub async fn fetch_viewer_id(
     client: &reqwest::Client,
     user_endpoint: &str,
     access_token: &str,
+    discord_user_fingerprint: Option<&str>,
 ) -> Result<i64, ViewerFetchError> {
     const USER_QUERY: &str = "
     query {
@@ -99,16 +103,34 @@ pub async fn fetch_viewer_id(
         .send()
         .await
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("Failed to fetch AniList viewer: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        discord_user_fingerprint,
+                    )
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("Failed to fetch AniList viewer");
             ViewerFetchError::BadGateway(
                 "Failed to fetch AniList viewer. Please try again.".to_string(),
             )
         })?
         .error_for_status()
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("AniList viewer request failed: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        discord_user_fingerprint,
+                    )
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("AniList viewer request failed");
             ViewerFetchError::BadGateway(
                 "AniList viewer request failed. Please try again.".to_string(),
             )
@@ -118,8 +140,17 @@ pub async fn fetch_viewer_id(
         .json::<ViewerResponse>()
         .await
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("Failed to parse AniList viewer: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.fetch_viewer_id",
+                        discord_user_fingerprint,
+                    )
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("Failed to parse AniList viewer");
             ViewerFetchError::BadGateway(
                 "Failed to parse AniList viewer response. Please try again.".to_string(),
             )
@@ -136,6 +167,7 @@ pub async fn exchange_code_for_token(
     client_secret: &str,
     redirect_uri: &str,
     code: &str,
+    discord_user_fingerprint: Option<&str>,
 ) -> Result<TokenResponse, TokenExchangeError> {
     let response = client
         .post(token_endpoint)
@@ -149,8 +181,17 @@ pub async fn exchange_code_for_token(
         .send()
         .await
         .map_err(|e| {
-            sentry::capture_error(&e);
-            error!("AniList token exchange request failed: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.exchange_code_for_token",
+                        discord_user_fingerprint,
+                    )
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("AniList token exchange request failed");
             TokenExchangeError::BadGateway(
                 "AniList token exchange request failed. Please try again.".to_string(),
             )
@@ -158,8 +199,17 @@ pub async fn exchange_code_for_token(
 
     if response.status().is_success() {
         return response.json::<TokenResponse>().await.map_err(|e| {
-            sentry::capture_error(&e);
-            error!("Failed to parse AniList token response: {e}");
+            sentry::with_scope(
+                |scope| {
+                    configure_oauth_scope(
+                        scope,
+                        "oauth.callback.exchange_code_for_token",
+                        discord_user_fingerprint,
+                    )
+                },
+                || sentry::capture_error(&e),
+            );
+            error!("Failed to parse AniList token response");
             TokenExchangeError::BadGateway(
                 "Failed to parse AniList token response. Please try again.".to_string(),
             )
@@ -192,20 +242,41 @@ pub async fn exchange_code_for_token(
         || matches!(error_payload.as_str(), "invalid_client" | "invalid_request");
 
     if is_upstream_failure {
-        let sentry_message = format!(
-            "AniList token exchange returned upstream status {} with payload: {}",
-            status.as_u16(),
-            error_payload
+        let upstream_error_code = match error_payload.as_str() {
+            "access_denied" => "access_denied",
+            "invalid_grant" => "invalid_grant",
+            "invalid_client" => "invalid_client",
+            "invalid_request" => "invalid_request",
+            "server_error" => "server_error",
+            _ => "other",
+        };
+        sentry::with_scope(
+            |scope| {
+                configure_oauth_scope(
+                    scope,
+                    "oauth.callback.exchange_code_for_token",
+                    discord_user_fingerprint,
+                );
+                scope.set_tag("oauth.upstream_status_code", status.as_u16().to_string());
+                scope.set_tag("oauth.upstream_error_code", upstream_error_code);
+            },
+            || {
+                sentry::capture_message(
+                    "AniList token exchange returned upstream failure",
+                    sentry::Level::Error,
+                )
+            },
         );
-        sentry::capture_message(&sentry_message, sentry::Level::Error);
-        error!("{sentry_message}");
+        error!(
+            "AniList token exchange returned upstream failure (status: {}, code: {})",
+            status.as_u16(),
+            upstream_error_code
+        );
+
+        return Err(TokenExchangeError::BadGateway(friendly_message.to_string()));
     }
 
-    if is_upstream_failure {
-        Err(TokenExchangeError::BadGateway(friendly_message.to_string()))
-    } else {
-        Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
-    }
+    Err(TokenExchangeError::BadRequest(friendly_message.to_string()))
 }
 
 pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>> {
@@ -218,16 +289,27 @@ pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>
     Some(Utc::now() + Duration::seconds(expires_in_seconds))
 }
 
-#[tracing::instrument(skip(access_token, refresh_token, db))]
+#[tracing::instrument(
+    skip(access_token, refresh_token, discord_user_id, user_id_hash_salt, db),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn upsert_oauth_credentials(
     discord_user_id: &str,
     anilist_id: i64,
     access_token: &str,
     refresh_token: Option<&str>,
     token_expires_at: Option<DateTime<Utc>>,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<(), UpsertOAuthCredentialsError> {
-    if let Some(existing) = fetch_credential_by_anilist_id(anilist_id, db)
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+        user_id_hash_salt,
+    );
+
+    if let Some(existing) = fetch_credential_by_anilist_id(anilist_id, user_id_hash_salt, db)
         .await
         .map_err(UpsertOAuthCredentialsError::Db)?
         && existing.discord_user_id != discord_user_id
@@ -275,12 +357,23 @@ pub fn credential_requires_relink(credential: &OAuthCredential) -> bool {
     credential.relink_required_at.is_some() || credential_is_expired(credential)
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(
+    skip(db, discord_user_id, user_id_hash_salt),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 async fn mark_expired_oauth_credential_relink_required(
     discord_user_id: &str,
     reason: &str,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<bool, sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+        user_id_hash_salt,
+    );
+
     sqlx::query(
         "UPDATE oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
@@ -303,12 +396,23 @@ pub enum UsableCredentialError {
     Db(sqlx::Error),
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(
+    skip(db, discord_user_id, user_id_hash_salt),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn mark_oauth_credentials_relink_required(
     discord_user_id: &str,
     reason: &str,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<(), sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+        user_id_hash_salt,
+    );
+
     sqlx::query(
         "UPDATE oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
@@ -330,11 +434,22 @@ fn is_anilist_id_conflict(error: &sqlx::Error) -> bool {
     }
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(
+    skip(db, discord_user_id, user_id_hash_salt),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn fetch_credential_by_discord_user(
     discord_user_id: &str,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+        user_id_hash_salt,
+    );
+
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
@@ -345,11 +460,23 @@ pub async fn fetch_credential_by_discord_user(
     .await
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(
+    skip(db, anilist_id, user_id_hash_salt),
+    fields(anilist_fingerprint = tracing::field::Empty)
+)]
 pub async fn fetch_credential_by_anilist_id(
     anilist_id: i64,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<Option<OAuthCredential>, sqlx::Error> {
+    let anilist_fingerprint_source = anilist_id.to_string();
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "anilist_fingerprint",
+        &anilist_fingerprint_source,
+        user_id_hash_salt,
+    );
+
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
@@ -360,12 +487,22 @@ pub async fn fetch_credential_by_anilist_id(
     .await
 }
 
-#[tracing::instrument(skip(db))]
+#[tracing::instrument(
+    skip(db, discord_user_id, user_id_hash_salt),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn fetch_usable_oauth_credential(
     discord_user_id: &str,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<OAuthCredential, UsableCredentialError> {
-    let Some(credential) = fetch_credential_by_discord_user(discord_user_id, db)
+    let discord_user_fingerprint = identifier_fingerprint(discord_user_id, user_id_hash_salt);
+    tracing::Span::current().record(
+        "discord_user_fingerprint",
+        tracing::field::display(&discord_user_fingerprint),
+    );
+
+    let Some(credential) = fetch_credential_by_discord_user(discord_user_id, user_id_hash_salt, db)
         .await
         .map_err(UsableCredentialError::Db)?
     else {
@@ -383,6 +520,7 @@ pub async fn fetch_usable_oauth_credential(
     if !mark_expired_oauth_credential_relink_required(
         discord_user_id,
         RELINK_REASON_TOKEN_EXPIRED,
+        user_id_hash_salt,
         db,
     )
     .await
@@ -390,9 +528,10 @@ pub async fn fetch_usable_oauth_credential(
     {
         // Another request may have completed a relink between the stale read above
         // and the conditional mark, so re-check the current row before forcing a relink.
-        let refreshed_credential = fetch_credential_by_discord_user(discord_user_id, db)
-            .await
-            .map_err(UsableCredentialError::Db)?;
+        let refreshed_credential =
+            fetch_credential_by_discord_user(discord_user_id, user_id_hash_salt, db)
+                .await
+                .map_err(UsableCredentialError::Db)?;
 
         return match refreshed_credential {
             Some(credential) if credential_requires_relink(&credential) => {
@@ -403,10 +542,23 @@ pub async fn fetch_usable_oauth_credential(
         };
     }
 
-    let sentry_message =
-        "AniList credential expired and now requires relink. User must restart /register.";
-    sentry::capture_message(sentry_message, sentry::Level::Warning);
-    warn!("{sentry_message}");
+    sentry::with_scope(
+        |scope| {
+            configure_oauth_scope(
+                scope,
+                "oauth.credentials.fetch_usable",
+                Some(discord_user_fingerprint.as_str()),
+            );
+            scope.set_tag("oauth.relink_reason", RELINK_REASON_TOKEN_EXPIRED);
+        },
+        || {
+            sentry::capture_message(
+                "AniList credential expired and now requires relink",
+                sentry::Level::Warning,
+            )
+        },
+    );
+    warn!("AniList credential expired and now requires relink");
 
     Err(UsableCredentialError::RelinkRequired)
 }
@@ -476,13 +628,24 @@ pub fn verify_oauth_context(
     Ok(payload)
 }
 
-#[tracing::instrument(skip(state, db))]
+#[tracing::instrument(
+    skip(state, db, discord_user_id, user_id_hash_salt),
+    fields(discord_user_fingerprint = tracing::field::Empty)
+)]
 pub async fn insert_oauth_session(
     state: &str,
     discord_user_id: &str,
     ttl_seconds: i64,
+    user_id_hash_salt: &str,
     db: &Pool<Postgres>,
 ) -> Result<(), sqlx::Error> {
+    record_identifier_fingerprint(
+        &tracing::Span::current(),
+        "discord_user_fingerprint",
+        discord_user_id,
+        user_id_hash_salt,
+    );
+
     sqlx::query(
         "INSERT INTO oauth_sessions (state, discord_user_id, expires_at) \
          VALUES ($1, $2, NOW() + ($3 * INTERVAL '1 second'))",
@@ -556,6 +719,8 @@ mod tests {
     use serde_json::json;
     use sha2::Sha256;
     use sqlx::{Pool, Postgres};
+
+    const TEST_USERID_HASH_SALT: &str = "test-userid-hash-salt";
 
     fn make_ctx(payload: serde_json::Value, secret: &str) -> String {
         type HmacSha256 = Hmac<Sha256>;
@@ -693,15 +858,17 @@ mod tests {
             "access_tok",
             Some("refresh_tok"),
             Some(Utc::now() + Duration::hours(1)),
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
         .expect("upsert should succeed");
 
-        let cred = fetch_credential_by_discord_user("111222333444555666", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let cred =
+            fetch_credential_by_discord_user("111222333444555666", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         assert_eq!(cred.discord_user_id, "111222333444555666");
         assert_eq!(cred.anilist_id, 987654321);
@@ -714,19 +881,40 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn upsert_updates_existing_credential(pool: Pool<Postgres>) {
-        upsert_oauth_credentials("user1", 111, "old_token", None, None, &pool)
-            .await
-            .expect("first upsert should succeed");
+        upsert_oauth_credentials(
+            "user1",
+            111,
+            "old_token",
+            None,
+            None,
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("first upsert should succeed");
 
-        mark_oauth_credentials_relink_required("user1", "token_expired", &pool)
-            .await
-            .expect("mark relink required should succeed");
+        mark_oauth_credentials_relink_required(
+            "user1",
+            "token_expired",
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("mark relink required should succeed");
 
-        upsert_oauth_credentials("user1", 111, "new_token", Some("new_refresh"), None, &pool)
-            .await
-            .expect("second upsert should succeed");
+        upsert_oauth_credentials(
+            "user1",
+            111,
+            "new_token",
+            Some("new_refresh"),
+            None,
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("second upsert should succeed");
 
-        let cred = fetch_credential_by_discord_user("user1", &pool)
+        let cred = fetch_credential_by_discord_user("user1", TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("fetch should not error")
             .expect("credential should exist");
@@ -747,21 +935,23 @@ mod tests {
             "expired_access",
             None,
             Some(Utc::now() - Duration::minutes(5)),
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
         .expect("upsert should succeed");
 
-        let error = fetch_usable_oauth_credential("expired_user", &pool)
+        let error = fetch_usable_oauth_credential("expired_user", TEST_USERID_HASH_SALT, &pool)
             .await
             .expect_err("expired credentials should require relink");
 
         assert!(matches!(error, UsableCredentialError::RelinkRequired));
 
-        let credential = fetch_credential_by_discord_user("expired_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let credential =
+            fetch_credential_by_discord_user("expired_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         assert!(credential.relink_required_at.is_some());
         assert_eq!(credential.relink_reason.as_deref(), Some("token_expired"));
@@ -779,34 +969,43 @@ mod tests {
             "expired_access",
             None,
             Some(Utc::now() - Duration::minutes(5)),
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
         .expect("upsert should succeed");
 
-        mark_oauth_credentials_relink_required("already_flagged_user", "token_expired", &pool)
-            .await
-            .expect("mark relink required should succeed");
+        mark_oauth_credentials_relink_required(
+            "already_flagged_user",
+            "token_expired",
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("mark relink required should succeed");
 
-        let initially_flagged = fetch_credential_by_discord_user("already_flagged_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let initially_flagged =
+            fetch_credential_by_discord_user("already_flagged_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         let initial_relink_required_at = initially_flagged
             .relink_required_at
             .expect("credential should already be flagged for relink");
 
-        let error = fetch_usable_oauth_credential("already_flagged_user", &pool)
-            .await
-            .expect_err("flagged credentials should still require relink");
+        let error =
+            fetch_usable_oauth_credential("already_flagged_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect_err("flagged credentials should still require relink");
 
         assert!(matches!(error, UsableCredentialError::RelinkRequired));
 
-        let credential = fetch_credential_by_discord_user("already_flagged_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let credential =
+            fetch_credential_by_discord_user("already_flagged_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         assert_eq!(
             credential.relink_required_at,
@@ -827,22 +1026,28 @@ mod tests {
             "fresh_access",
             None,
             Some(Utc::now() + Duration::hours(2)),
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
         .expect("upsert should succeed");
 
-        let marked =
-            mark_expired_oauth_credential_relink_required("race_user", "token_expired", &pool)
-                .await
-                .expect("conditional mark should succeed");
+        let marked = mark_expired_oauth_credential_relink_required(
+            "race_user",
+            "token_expired",
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("conditional mark should succeed");
 
         assert!(!marked);
 
-        let credential = fetch_credential_by_discord_user("race_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let credential =
+            fetch_credential_by_discord_user("race_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         assert!(credential.relink_required_at.is_none());
         assert!(credential.relink_reason.is_none());
@@ -860,19 +1065,26 @@ mod tests {
             "expired_access",
             None,
             Some(Utc::now() - Duration::minutes(5)),
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
         .expect("upsert should succeed");
 
-        mark_oauth_credentials_relink_required("already_marked_user", "token_expired", &pool)
-            .await
-            .expect("mark relink required should succeed");
+        mark_oauth_credentials_relink_required(
+            "already_marked_user",
+            "token_expired",
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("mark relink required should succeed");
 
-        let initially_flagged = fetch_credential_by_discord_user("already_marked_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let initially_flagged =
+            fetch_credential_by_discord_user("already_marked_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         let initial_relink_required_at = initially_flagged
             .relink_required_at
@@ -881,6 +1093,7 @@ mod tests {
         let marked = mark_expired_oauth_credential_relink_required(
             "already_marked_user",
             "token_expired",
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
@@ -888,10 +1101,11 @@ mod tests {
 
         assert!(!marked);
 
-        let credential = fetch_credential_by_discord_user("already_marked_user", &pool)
-            .await
-            .expect("fetch should not error")
-            .expect("credential should exist");
+        let credential =
+            fetch_credential_by_discord_user("already_marked_user", TEST_USERID_HASH_SALT, &pool)
+                .await
+                .expect("fetch should not error")
+                .expect("credential should exist");
 
         assert_eq!(
             credential.relink_required_at,
@@ -910,12 +1124,13 @@ mod tests {
             "active_access",
             None,
             Some(Utc::now() + Duration::hours(6)),
+            TEST_USERID_HASH_SALT,
             &pool,
         )
         .await
         .expect("upsert should succeed");
 
-        let credential = fetch_usable_oauth_credential("active_user", &pool)
+        let credential = fetch_usable_oauth_credential("active_user", TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("active credentials should remain usable");
 
@@ -927,7 +1142,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn fetch_by_discord_user_returns_none_when_absent(pool: Pool<Postgres>) {
-        let result = fetch_credential_by_discord_user("nonexistent", &pool)
+        let result = fetch_credential_by_discord_user("nonexistent", TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("fetch should not error");
 
@@ -938,11 +1153,19 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn fetch_by_anilist_id_finds_correct_credential(pool: Pool<Postgres>) {
-        upsert_oauth_credentials("user_a", 42, "tok_a", None, None, &pool)
-            .await
-            .expect("upsert should succeed");
+        upsert_oauth_credentials(
+            "user_a",
+            42,
+            "tok_a",
+            None,
+            None,
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("upsert should succeed");
 
-        let cred = fetch_credential_by_anilist_id(42, &pool)
+        let cred = fetch_credential_by_anilist_id(42, TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("fetch should not error")
             .expect("credential should exist");
@@ -955,7 +1178,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn fetch_by_anilist_id_returns_none_when_absent(pool: Pool<Postgres>) {
-        let result = fetch_credential_by_anilist_id(99999, &pool)
+        let result = fetch_credential_by_anilist_id(99999, TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("fetch should not error");
 
@@ -966,17 +1189,33 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn upsert_rejects_anilist_id_linked_to_another_discord_user(pool: Pool<Postgres>) {
-        upsert_oauth_credentials("user_a", 42, "tok_a", None, None, &pool)
-            .await
-            .expect("initial upsert should succeed");
+        upsert_oauth_credentials(
+            "user_a",
+            42,
+            "tok_a",
+            None,
+            None,
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect("initial upsert should succeed");
 
-        let error = upsert_oauth_credentials("user_b", 42, "tok_b", None, None, &pool)
-            .await
-            .expect_err("conflicting upsert should fail");
+        let error = upsert_oauth_credentials(
+            "user_b",
+            42,
+            "tok_b",
+            None,
+            None,
+            TEST_USERID_HASH_SALT,
+            &pool,
+        )
+        .await
+        .expect_err("conflicting upsert should fail");
 
         assert!(matches!(error, UpsertOAuthCredentialsError::AlreadyLinked));
 
-        let credential = fetch_credential_by_anilist_id(42, &pool)
+        let credential = fetch_credential_by_anilist_id(42, TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("fetch should not error")
             .expect("credential should still exist");
@@ -989,7 +1228,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn consume_session_succeeds_for_valid_state(pool: Pool<Postgres>) {
-        insert_oauth_session("state_abc", "123456789", 600, &pool)
+        insert_oauth_session("state_abc", "123456789", 600, TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("insert should succeed");
 
@@ -1016,7 +1255,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn consume_session_fails_on_replay(pool: Pool<Postgres>) {
-        insert_oauth_session("replayable", "111", 600, &pool)
+        insert_oauth_session("replayable", "111", 600, TEST_USERID_HASH_SALT, &pool)
             .await
             .expect("insert should succeed");
 

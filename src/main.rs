@@ -4,7 +4,7 @@ pub mod routes;
 pub mod utils;
 
 use crate::{
-    routes::{authorized::authorized, catchers::not_found, start::start},
+    routes::{authorized::authorized, catchers::not_found, healthz::healthz, start::start},
     utils::{
         consts::{ANILIST_TOKEN, ANILIST_USER_BASE},
         structs::MyState,
@@ -26,6 +26,7 @@ struct AppConfig {
     client_secret: String,
     redirect_uri: String,
     context_signing_secret: String,
+    user_id_hash_salt: String,
     context_ttl_seconds: i64,
     state_ttl_seconds: i64,
     database_url: String,
@@ -42,6 +43,7 @@ impl AppConfig {
             client_secret: required_env("ANILIST_CLIENT_SECRET")?,
             redirect_uri: required_env("ANILIST_REDIRECT_URI")?,
             context_signing_secret: required_env("OAUTH_CONTEXT_SIGNING_SECRET")?,
+            user_id_hash_salt: required_env("USERID_HASH_SALT")?,
             context_ttl_seconds: optional_positive_i64_env("OAUTH_CONTEXT_TTL_SECONDS")?
                 .unwrap_or(DEFAULT_CONTEXT_TTL_SECONDS),
             state_ttl_seconds: optional_positive_i64_env("OAUTH_STATE_TTL_SECONDS")?
@@ -121,6 +123,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         client_secret: config.client_secret.clone(),
         redirect_uri: config.redirect_uri.clone(),
         context_signing_secret: config.context_signing_secret.clone(),
+        user_id_hash_salt: config.user_id_hash_salt.clone(),
         context_ttl_seconds: config.context_ttl_seconds,
         state_ttl_seconds: config.state_ttl_seconds,
         token_endpoint: ANILIST_TOKEN.to_string(),
@@ -132,7 +135,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
     let figment = rocket::Config::figment().merge(("secret_key", config.rocket_secret_key.clone()));
 
     Ok(rocket::custom(figment)
-        .mount("/", routes![start, authorized])
+        .mount("/", routes![healthz, start, authorized])
         .mount("/static", FileServer::from(relative!("static")))
         .register("/", catchers![not_found])
         .manage(state))
