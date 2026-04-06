@@ -35,10 +35,18 @@ pub fn configure_oauth_scope(
 pub fn redact_url_credentials(input: &str) -> String {
     use linkify::{LinkFinder, LinkKind};
 
-    if let Ok(parsed) = url::Url::parse(input)
-        && (!parsed.username().is_empty() || parsed.password().is_some())
-    {
-        return redact_single_url(input);
+    if let Ok(mut parsed) = url::Url::parse(input) {
+        let has_username = !parsed.username().is_empty();
+        let has_password = parsed.password().is_some();
+        if has_username || has_password {
+            if has_username {
+                let _ = parsed.set_username("REDACTED_USERNAME");
+            }
+            if has_password {
+                let _ = parsed.set_password(Some("REDACTED_PASSWORD"));
+            }
+            return parsed.to_string();
+        }
     }
 
     let mut finder = LinkFinder::new();

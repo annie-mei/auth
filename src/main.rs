@@ -43,8 +43,8 @@ impl AppConfig {
         let (sentry_traces_sample_rate, sentry_traces_sample_rate_invalid) =
             match optional_env("SENTRY_TRACES_SAMPLE_RATE") {
                 Some(raw) => match raw.parse::<f32>() {
-                    Ok(rate) => (rate.clamp(0.0, 1.0), None),
-                    Err(_) => (0.0, Some(raw)),
+                    Ok(rate) if rate.is_finite() => (rate.clamp(0.0, 1.0), None),
+                    _ => (0.0, Some(raw)),
                 },
                 None => (0.0, None),
             };
