@@ -57,7 +57,7 @@ pub async fn start(ctx: &str, state: &State<MyState>) -> Result<Redirect, BadReq
                     scope,
                     "oauth.start.create_session",
                     Some(discord_user_fingerprint.as_str()),
-                );
+                )
             },
             || sentry::capture_error(&e),
         );

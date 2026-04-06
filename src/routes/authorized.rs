@@ -118,7 +118,7 @@ pub async fn authorized(
                             scope,
                             "oauth.callback.upsert_oauth_credentials",
                             Some(discord_user_fingerprint.as_str()),
-                        );
+                        )
                     },
                     || sentry::capture_error(&error),
                 );
