@@ -15,6 +15,7 @@ use rocket::fs::{FileServer, relative};
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 
 const DEFAULT_CONTEXT_TTL_SECONDS: i64 = 300;
@@ -22,6 +23,8 @@ const DEFAULT_STATE_TTL_SECONDS: i64 = 300;
 
 struct AppConfig {
     sentry_dsn: Option<String>,
+    sentry_environment: Option<String>,
+    sentry_traces_sample_rate: f32,
     client_id: String,
     client_secret: String,
     redirect_uri: String,
@@ -37,8 +40,23 @@ impl AppConfig {
     fn from_env() -> Result<Self> {
         let _ = dotenvy::dotenv();
 
+        let (sentry_traces_sample_rate, sentry_traces_sample_rate_invalid) =
+            match optional_env("SENTRY_TRACES_SAMPLE_RATE") {
+                Some(raw) => match raw.parse::<f32>() {
+                    Ok(rate) => (rate.clamp(0.0, 1.0), None),
+                    Err(_) => (0.0, Some(raw)),
+                },
+                None => (0.0, None),
+            };
+
+        if let Some(invalid_value) = sentry_traces_sample_rate_invalid {
+            eprintln!("Invalid SENTRY_TRACES_SAMPLE_RATE={invalid_value}; defaulting to 0.0");
+        }
+
         Ok(Self {
             sentry_dsn: optional_env("SENTRY_DSN"),
+            sentry_environment: optional_env("SENTRY_ENVIRONMENT"),
+            sentry_traces_sample_rate,
             client_id: required_env("ANILIST_CLIENT_ID")?,
             client_secret: required_env("ANILIST_CLIENT_SECRET")?,
             redirect_uri: required_env("ANILIST_REDIRECT_URI")?,
@@ -87,11 +105,35 @@ fn optional_positive_i64_env(key: &str) -> Result<Option<i64>> {
         .map(Some)
 }
 
-fn init_sentry(dsn: &str) -> sentry::ClientInitGuard {
+fn init_sentry(
+    dsn: &str,
+    environment: Option<String>,
+    traces_sample_rate: f32,
+) -> sentry::ClientInitGuard {
+    use crate::utils::observability::redact_url_credentials;
+
     sentry::init((
         dsn,
         sentry::ClientOptions {
             release: sentry::release_name!(),
+            environment: environment.map(Into::into),
+            traces_sample_rate,
+            before_send: Some(Arc::new(|mut event| {
+                for exception in event.exception.values.iter_mut() {
+                    if let Some(ref mut value) = exception.value {
+                        *value = redact_url_credentials(value);
+                    }
+                }
+                if let Some(ref mut message) = event.message {
+                    *message = redact_url_credentials(message);
+                }
+                for breadcrumb in event.breadcrumbs.values.iter_mut() {
+                    if let Some(ref mut message) = breadcrumb.message {
+                        *message = redact_url_credentials(message);
+                    }
+                }
+                Some(event)
+            })),
             ..Default::default()
         },
     ))
@@ -144,7 +186,13 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
 #[rocket::main]
 async fn main() -> Result<()> {
     let config = AppConfig::from_env()?;
-    let _sentry = config.sentry_dsn.as_deref().map(init_sentry);
+    let _sentry = config.sentry_dsn.as_deref().map(|dsn| {
+        init_sentry(
+            dsn,
+            config.sentry_environment.clone(),
+            config.sentry_traces_sample_rate,
+        )
+    });
 
     tracing_subscriber::registry()
         .with(sentry::integrations::tracing::layer())
@@ -152,6 +200,11 @@ async fn main() -> Result<()> {
 
     if config.sentry_dsn.is_none() {
         eprintln!("SENTRY_DSN not set; Sentry is disabled");
+    } else if config.sentry_traces_sample_rate > 0.0 {
+        info!(
+            "Sentry trace sampling enabled (sample_rate={})",
+            config.sentry_traces_sample_rate
+        );
     }
 
     build_rocket(&config).await?.launch().await?;
