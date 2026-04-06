@@ -2,7 +2,7 @@
 builder = "RAILPACK"
 
 [deploy]
-startCommand = "ROCKET_PORT=$PORT ROCKET_ADDRESS=0.0.0.0 ./annie-mei-auth"
+startCommand = "ROCKET_PORT=$PORT ROCKET_ADDRESS=0.0.0.0 ./bin/annie-mei-auth"
 healthcheckPath = "/healthz"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
