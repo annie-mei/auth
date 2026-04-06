@@ -208,7 +208,7 @@ async fn main() -> Result<()> {
     if config.sentry_dsn.is_none() {
         eprintln!("SENTRY_DSN not set; Sentry is disabled");
     } else if config.sentry_traces_sample_rate > 0.0 {
-        info!(
+        eprintln!(
             "Sentry trace sampling enabled (sample_rate={})",
             config.sentry_traces_sample_rate
         );
