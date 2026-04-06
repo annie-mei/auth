@@ -358,7 +358,7 @@ pub fn credential_requires_relink(credential: &OAuthCredential) -> bool {
 }
 
 #[tracing::instrument(
-    skip(db, discord_user_id),
+    skip(db, discord_user_id, user_id_hash_salt),
     fields(discord_user_fingerprint = tracing::field::Empty)
 )]
 async fn mark_expired_oauth_credential_relink_required(
@@ -397,7 +397,7 @@ pub enum UsableCredentialError {
 }
 
 #[tracing::instrument(
-    skip(db, discord_user_id),
+    skip(db, discord_user_id, user_id_hash_salt),
     fields(discord_user_fingerprint = tracing::field::Empty)
 )]
 pub async fn mark_oauth_credentials_relink_required(
@@ -435,7 +435,7 @@ fn is_anilist_id_conflict(error: &sqlx::Error) -> bool {
 }
 
 #[tracing::instrument(
-    skip(db, discord_user_id),
+    skip(db, discord_user_id, user_id_hash_salt),
     fields(discord_user_fingerprint = tracing::field::Empty)
 )]
 pub async fn fetch_credential_by_discord_user(
@@ -461,7 +461,7 @@ pub async fn fetch_credential_by_discord_user(
 }
 
 #[tracing::instrument(
-    skip(db, anilist_id),
+    skip(db, anilist_id, user_id_hash_salt),
     fields(anilist_fingerprint = tracing::field::Empty)
 )]
 pub async fn fetch_credential_by_anilist_id(
@@ -488,7 +488,7 @@ pub async fn fetch_credential_by_anilist_id(
 }
 
 #[tracing::instrument(
-    skip(db, discord_user_id),
+    skip(db, discord_user_id, user_id_hash_salt),
     fields(discord_user_fingerprint = tracing::field::Empty)
 )]
 pub async fn fetch_usable_oauth_credential(
