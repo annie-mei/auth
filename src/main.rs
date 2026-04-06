@@ -118,6 +118,7 @@ fn init_sentry(
             release: sentry::release_name!(),
             environment: environment.map(Into::into),
             traces_sample_rate,
+            enable_logs: true,
             before_send: Some(Arc::new(|mut event| {
                 for exception in event.exception.values.iter_mut() {
                     if let Some(ref mut value) = exception.value {
@@ -133,6 +134,10 @@ fn init_sentry(
                     }
                 }
                 Some(event)
+            })),
+            before_send_log: Some(Arc::new(|mut log| {
+                log.body = redact_url_credentials(&log.body);
+                Some(log)
             })),
             ..Default::default()
         },

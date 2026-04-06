@@ -26,7 +26,7 @@ reqwest = { version = "0.12.24", default-features = false, features = [
   "rustls-tls",
 ] }
 rocket = { version = "0.5.1", features = ["json", "secrets"] }
-sentry = { version = "0.47.0", features = ["tracing"] }
+sentry = { version = "0.47.0", features = ["tracing", "logs"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
