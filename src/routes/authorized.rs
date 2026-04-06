@@ -3,7 +3,7 @@ use crate::utils::{
         UpsertOAuthCredentialsError, exchange_code_for_token, fetch_viewer_id, token_expires_at,
         upsert_oauth_credentials,
     },
-    observability::{configure_oauth_scope, identifier_fingerprint},
+    observability::{configure_oauth_scope, identifier_fingerprint, record_identifier_fingerprint},
     structs::{MyState, StateToken, StateTokenError},
 };
 
@@ -19,7 +19,7 @@ use rocket::{
     skip_all,
     fields(
         discord_user_fingerprint = tracing::field::Empty,
-        anilist_id = tracing::field::Empty,
+        anilist_fingerprint = tracing::field::Empty,
         oauth_error_code = tracing::field::Empty
     )
 )]
@@ -88,7 +88,12 @@ pub async fn authorized(
     .await
     {
         Ok(user_id) => {
-            span.record("anilist_id", user_id);
+            record_identifier_fingerprint(
+                &span,
+                "anilist_fingerprint",
+                &user_id.to_string(),
+                &state.user_id_hash_salt,
+            );
             user_id
         }
         Err(error) => return callback_error(error.message(), error.status()),

@@ -135,6 +135,8 @@ Use the repo root: `cd /Users/sekkensenzai/code/annie-mei/auth`
 `src/main.rs` currently expects these runtime secrets/config values:
 
 - `SENTRY_DSN`
+- `SENTRY_ENVIRONMENT`
+- `SENTRY_TRACES_SAMPLE_RATE`
 - `ANILIST_CLIENT_ID`
 - `ANILIST_CLIENT_SECRET`
 - `ANILIST_REDIRECT_URI`
