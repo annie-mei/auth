@@ -4,7 +4,10 @@ use rocket::{
     http::Status,
     response::status::Custom,
     serde::{Serialize, json::Json},
+    tokio::time::{Duration, timeout},
 };
+
+const HEALTHZ_DATABASE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -22,20 +25,33 @@ pub struct HealthResponse<'a> {
 #[get("/healthz")]
 #[tracing::instrument(name = "healthz", skip(state))]
 pub async fn healthz(state: &State<MyState>) -> Custom<Json<HealthResponse<'static>>> {
-    let db_result = sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(&state.pool)
-        .await;
+    let db_result = timeout(
+        HEALTHZ_DATABASE_TIMEOUT,
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.pool),
+    )
+    .await;
 
     match db_result {
-        Ok(_) => Custom(
+        Ok(Ok(_)) => Custom(
             Status::Ok,
             Json(HealthResponse {
                 status: "healthy",
                 checks: HealthChecks { database: "ok" },
             }),
         ),
-        Err(_) => {
+        Ok(Err(_)) => {
             error!("Health check failed for database dependency");
+
+            Custom(
+                Status::ServiceUnavailable,
+                Json(HealthResponse {
+                    status: "unhealthy",
+                    checks: HealthChecks { database: "error" },
+                }),
+            )
+        }
+        Err(_) => {
+            error!("Health check timed out waiting for database dependency");
 
             Custom(
                 Status::ServiceUnavailable,
