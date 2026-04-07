@@ -21,9 +21,9 @@ blake3 = "1.8.2"
 dotenvy = "0.15.7"
 linkify = "0.10"
 nanoid = "0.4.0"
-reqwest = { version = "0.12.24", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
   "json",
-  "rustls-tls",
+  "rustls",
 ] }
 rocket = { version = "0.5.1", features = ["json", "secrets"] }
 sentry = { version = "0.47.0", features = ["tracing", "logs"] }
