@@ -37,8 +37,8 @@ sqlx = { version = "0.8.6", default-features = false, features = [
   "migrate",
   "chrono",
 ] }
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 url = "2.5.7"
