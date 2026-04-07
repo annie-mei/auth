@@ -62,6 +62,16 @@ rustfmt.toml            # formatting config
 - Never force push.
 - When git issues occur, explain the problem, present options, and ask the user how they want to resolve it.
 
+### Versioning
+
+Bump the version in `Cargo.toml` using semantic versioning when preparing versioned changes:
+
+- **MAJOR** (X.0.0): Breaking changes, incompatible API changes
+- **MINOR** (0.X.0): New features, backwards-compatible functionality
+- **PATCH** (0.0.X): Bug fixes, backwards-compatible patches
+
+- Also commit the Cargo.lock file when bumping the version — run `cargo check` to update the lockfile
+
 ### Pull Requests
 
 - PR titles should use `[ANNIE-<ticket-number>]/<description>`.

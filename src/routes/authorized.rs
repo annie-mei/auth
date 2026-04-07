@@ -292,7 +292,7 @@ mod tests {
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::Utc;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use rocket::{Config, http::Status, local::asynchronous::Client, routes};
     use serde_json::json;
     use sha2::Sha256;
