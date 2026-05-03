@@ -170,7 +170,6 @@ Important notes:
 - Always let `rustfmt` decide final formatting.
 - Do not hand-align fields or parameters.
 - Preserve the existing compact Rocket route style unless a refactor clearly improves readability.
-- Keep files ASCII unless the file already requires Unicode.
 
 ### Imports and naming
 
