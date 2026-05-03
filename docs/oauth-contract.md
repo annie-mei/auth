@@ -55,10 +55,10 @@ and
 | `anilist_id`          | `BIGINT`        | AniList user ID. Unique across the table.                                       |
 | `access_token`        | `TEXT`          | AniList OAuth access token.                                                     |
 | `refresh_token`       | `TEXT NULL`     | AniList OAuth refresh token, when issued.                                       |
-| `token_expires_at`    | `TIMESTAMPTZ`   | Token expiry, when AniList provides one.                                        |
+| `token_expires_at`    | `TIMESTAMPTZ NULL` | Token expiry, when AniList provides one.                                        |
 | `token_updated_at`    | `TIMESTAMPTZ`   | Last token write time.                                                          |
 | `created_at`          | `TIMESTAMPTZ`   | Initial link time.                                                              |
-| `relink_required_at`  | `TIMESTAMPTZ`   | Set when this service decides the user must re-run `/register`.                 |
+| `relink_required_at`  | `TIMESTAMPTZ NULL` | Set when this service decides the user must re-run `/register`.                 |
 | `relink_reason`       | `TEXT NULL`     | Free-text reason that pairs with `relink_required_at`.                          |
 
 **Auth-service writes:** `upsert_oauth_credentials` from
@@ -85,7 +85,7 @@ Short-lived state for in-flight OAuth flows. Migration:
 | `state`           | `TEXT` (PK)    | Opaque per-flow state token issued by this service.                         |
 | `discord_user_id` | `TEXT`         | Raw Discord snowflake string, mirroring `oauth_credentials.discord_user_id`. |
 | `expires_at`      | `TIMESTAMPTZ`  | When the session token stops being valid.                                   |
-| `used_at`         | `TIMESTAMPTZ`  | When the session was redeemed (replay protection).                          |
+| `used_at`         | `TIMESTAMPTZ NULL` | When the session was redeemed (replay protection).                          |
 | `created_at`      | `TIMESTAMPTZ`  | Initial creation time.                                                      |
 
 **Auth-service writes:** `/oauth/anilist/start` inserts the row before
@@ -147,7 +147,17 @@ spans, and Sentry telemetry must not include the raw snowflake.** Use
 `utils::observability::identifier_fingerprint` (this service) or
 `crate::utils::privacy::hash_user_id` (bot) to emit a salted hash
 instead. Both helpers use the shared `USERID_HASH_SALT` environment
-variable so fingerprints correlate across repos.
+variable so fingerprints correlate across repos; keep that variable
+listed in the [README environment variables](../README.md#environment-variables).
+
+The `ctx` query parameter on `/oauth/anilist/start` is base64url-encoded
+JSON plus a signature, not encrypted data. It contains raw
+`discord_user_id`, `guild_id`, and `interaction_id` values, so request
+URL capture can leak those identifiers even when application logs use
+fingerprints. Strip or redact the full `ctx` value from HTTP access logs,
+Sentry transactions, request breadcrumbs, distributed tracing spans, and
+any reverse-proxy logs before those observability records leave the
+service.
 
 `oauth_credentials.access_token` and `oauth_credentials.refresh_token`
 are bearer credentials that grant full access to the linked AniList
