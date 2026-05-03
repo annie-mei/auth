@@ -18,7 +18,7 @@ pub struct MyState {
     pub pool: PgPool,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Deserialize, PartialEq, Eq)]
 pub struct OAuthContextPayload {
     pub v: u8,
     pub discord_user_id: String,
@@ -27,6 +27,20 @@ pub struct OAuthContextPayload {
     pub nonce: String,
     pub iat: i64,
     pub exp: i64,
+}
+
+impl fmt::Debug for OAuthContextPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthContextPayload")
+            .field("v", &self.v)
+            .field("discord_user_id", &"[REDACTED]")
+            .field("guild_id", &self.guild_id.as_ref().map(|_| "[REDACTED]"))
+            .field("interaction_id", &"[REDACTED]")
+            .field("nonce", &"[REDACTED]")
+            .field("iat", &self.iat)
+            .field("exp", &self.exp)
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]
@@ -74,7 +88,7 @@ pub struct OAuthCredential {
 impl fmt::Debug for OAuthCredential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OAuthCredential")
-            .field("discord_user_id", &self.discord_user_id)
+            .field("discord_user_id", &"[REDACTED]")
             .field("anilist_id", &self.anilist_id)
             .field("access_token", &"[REDACTED]")
             .field(
@@ -90,13 +104,25 @@ impl fmt::Debug for OAuthCredential {
     }
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(sqlx::FromRow)]
 pub struct OAuthSession {
     pub state: String,
     pub discord_user_id: String,
     pub expires_at: DateTime<Utc>,
     pub used_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+}
+
+impl fmt::Debug for OAuthSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthSession")
+            .field("state", &"[REDACTED]")
+            .field("discord_user_id", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .field("used_at", &self.used_at)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]
@@ -209,5 +235,45 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("access_secret"));
         assert!(!debug.contains("refresh_secret"));
+        assert!(!debug.contains("123456789012345678"));
+    }
+
+    #[test]
+    fn oauth_context_payload_debug_redacts_identifiers() {
+        let payload = OAuthContextPayload {
+            v: 1,
+            discord_user_id: "123456789012345678".to_string(),
+            guild_id: Some("987654321098765432".to_string()),
+            interaction_id: "12222333344445555".to_string(),
+            nonce: "bM0XvTa5yT4K0z2yPxtA3A".to_string(),
+            iat: 1711500000,
+            exp: 1711500300,
+        };
+
+        let debug = format!("{payload:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("123456789012345678"));
+        assert!(!debug.contains("987654321098765432"));
+        assert!(!debug.contains("12222333344445555"));
+        assert!(!debug.contains("bM0XvTa5yT4K0z2yPxtA3A"));
+    }
+
+    #[test]
+    fn oauth_session_debug_redacts_identifiers() {
+        let now = chrono::Utc::now();
+        let session = super::OAuthSession {
+            state: "state_secret".to_string(),
+            discord_user_id: "123456789012345678".to_string(),
+            expires_at: now,
+            used_at: None,
+            created_at: now,
+        };
+
+        let debug = format!("{session:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("state_secret"));
+        assert!(!debug.contains("123456789012345678"));
     }
 }
