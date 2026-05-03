@@ -18,9 +18,14 @@ Auth server for AniList OAuth for Annie Mei.
 - `OAUTH_CONTEXT_SIGNING_SECRET`
 - `OAUTH_CONTEXT_TTL_SECONDS` (optional, defaults to `300`)
 - `OAUTH_STATE_TTL_SECONDS` (optional, defaults to `300`)
+- `USERID_HASH_SALT`
 - `DATABASE_URL`
 - `ROCKET_SECRET_KEY`
 - `SENTRY_DSN` (optional)
+
+## Documentation
+
+- [OAuth data contract](docs/oauth-contract.md) — shared schema and payload contract with the [`annie-mei`](https://github.com/annie-mei/annie-mei) bot repo
 
 ## Validation
 

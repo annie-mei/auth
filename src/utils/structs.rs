@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -16,7 +18,7 @@ pub struct MyState {
     pub pool: PgPool,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Deserialize, PartialEq, Eq)]
 pub struct OAuthContextPayload {
     pub v: u8,
     pub discord_user_id: String,
@@ -27,12 +29,40 @@ pub struct OAuthContextPayload {
     pub exp: i64,
 }
 
-#[derive(Debug, Deserialize)]
+impl fmt::Debug for OAuthContextPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthContextPayload")
+            .field("v", &self.v)
+            .field("discord_user_id", &"[REDACTED]")
+            .field("guild_id", &self.guild_id.as_ref().map(|_| "[REDACTED]"))
+            .field("interaction_id", &"[REDACTED]")
+            .field("nonce", &"[REDACTED]")
+            .field("iat", &self.iat)
+            .field("exp", &self.exp)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<i64>,
     pub token_type: Option<String>,
+}
+
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("access_token", &"[REDACTED]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("expires_in", &self.expires_in)
+            .field("token_type", &self.token_type)
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,7 +72,7 @@ pub struct TokenErrorResponse {
     pub error_description: Option<String>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(sqlx::FromRow)]
 pub struct OAuthCredential {
     pub discord_user_id: String,
     pub anilist_id: i64,
@@ -55,13 +85,44 @@ pub struct OAuthCredential {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+impl fmt::Debug for OAuthCredential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthCredential")
+            .field("discord_user_id", &"[REDACTED]")
+            .field("anilist_id", &self.anilist_id)
+            .field("access_token", &"[REDACTED]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("token_expires_at", &self.token_expires_at)
+            .field("token_updated_at", &self.token_updated_at)
+            .field("relink_required_at", &self.relink_required_at)
+            .field("relink_reason", &self.relink_reason)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+#[derive(sqlx::FromRow)]
 pub struct OAuthSession {
     pub state: String,
     pub discord_user_id: String,
     pub expires_at: DateTime<Utc>,
     pub used_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+}
+
+impl fmt::Debug for OAuthSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthSession")
+            .field("state", &"[REDACTED]")
+            .field("discord_user_id", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .field("used_at", &self.used_at)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]
@@ -136,5 +197,83 @@ mod tests {
         assert_eq!(payload.v, 1);
         assert_eq!(payload.discord_user_id, "123456789012345678");
         assert_eq!(payload.guild_id.as_deref(), Some("987654321098765432"));
+    }
+
+    #[test]
+    fn token_response_debug_redacts_tokens() {
+        let token_response = TokenResponse {
+            access_token: "access_secret".to_string(),
+            refresh_token: Some("refresh_secret".to_string()),
+            expires_in: Some(3600),
+            token_type: Some("Bearer".to_string()),
+        };
+
+        let debug = format!("{token_response:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("access_secret"));
+        assert!(!debug.contains("refresh_secret"));
+    }
+
+    #[test]
+    fn oauth_credential_debug_redacts_tokens() {
+        let now = chrono::Utc::now();
+        let credential = super::OAuthCredential {
+            discord_user_id: "123456789012345678".to_string(),
+            anilist_id: 42,
+            access_token: "access_secret".to_string(),
+            refresh_token: Some("refresh_secret".to_string()),
+            token_expires_at: Some(now),
+            token_updated_at: now,
+            relink_required_at: None,
+            relink_reason: None,
+            created_at: now,
+        };
+
+        let debug = format!("{credential:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("access_secret"));
+        assert!(!debug.contains("refresh_secret"));
+        assert!(!debug.contains("123456789012345678"));
+    }
+
+    #[test]
+    fn oauth_context_payload_debug_redacts_identifiers() {
+        let payload = OAuthContextPayload {
+            v: 1,
+            discord_user_id: "123456789012345678".to_string(),
+            guild_id: Some("987654321098765432".to_string()),
+            interaction_id: "12222333344445555".to_string(),
+            nonce: "bM0XvTa5yT4K0z2yPxtA3A".to_string(),
+            iat: 1711500000,
+            exp: 1711500300,
+        };
+
+        let debug = format!("{payload:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("123456789012345678"));
+        assert!(!debug.contains("987654321098765432"));
+        assert!(!debug.contains("12222333344445555"));
+        assert!(!debug.contains("bM0XvTa5yT4K0z2yPxtA3A"));
+    }
+
+    #[test]
+    fn oauth_session_debug_redacts_identifiers() {
+        let now = chrono::Utc::now();
+        let session = super::OAuthSession {
+            state: "state_secret".to_string(),
+            discord_user_id: "123456789012345678".to_string(),
+            expires_at: now,
+            used_at: None,
+            created_at: now,
+        };
+
+        let debug = format!("{session:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("state_secret"));
+        assert!(!debug.contains("123456789012345678"));
     }
 }
