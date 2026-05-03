@@ -22,6 +22,10 @@ Auth server for AniList OAuth for Annie Mei.
 - `ROCKET_SECRET_KEY`
 - `SENTRY_DSN` (optional)
 
+## Documentation
+
+- [OAuth data contract](docs/oauth-contract.md) — shared schema and payload contract with the [`annie-mei`](../annie-mei) bot repo
+
 ## Validation
 
 - `cargo fmt --check`
