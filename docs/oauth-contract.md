@@ -148,3 +148,16 @@ spans, and Sentry telemetry must not include the raw snowflake.** Use
 `crate::utils::privacy::hash_user_id` (bot) to emit a salted hash
 instead. Both helpers use the shared `USERID_HASH_SALT` environment
 variable so fingerprints correlate across repos.
+
+`oauth_credentials.access_token` and `oauth_credentials.refresh_token`
+are bearer credentials that grant full access to the linked AniList
+account. **They must never appear in logs, spans, breadcrumbs, error
+payloads, Sentry events, or any other observability sink — not in
+plain text and not as a fingerprint.** When propagating an
+`oauth_credentials` row through code that might be serialised by an
+error handler or panic hook, redact both fields first or move them
+behind a wrapper type whose `Debug`/`Display` impls do not expose the
+secret. The same rule applies to AniList's response bodies for
+`/oauth/anilist/callback`: never log the raw token-exchange response
+body and never include `Authorization: Bearer …` headers in logged
+HTTP requests.
