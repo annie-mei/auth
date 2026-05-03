@@ -24,7 +24,7 @@ Auth server for AniList OAuth for Annie Mei.
 
 ## Documentation
 
-- [OAuth data contract](docs/oauth-contract.md) — shared schema and payload contract with the [`annie-mei`](../annie-mei) bot repo
+- [OAuth data contract](docs/oauth-contract.md) — shared schema and payload contract with the [`annie-mei`](https://github.com/annie-mei/annie-mei) bot repo
 
 ## Validation
 

@@ -1,13 +1,13 @@
 # OAuth data contract
 
 This document describes the shared data contract between this
-auth-service and the [`annie-mei`](../../annie-mei) Discord bot so
-future changes have an explicit reference to check against. Any change
-to the field names, types, or ID representation listed here must be
-coordinated in **both** repos.
+auth-service and the [`annie-mei`](https://github.com/annie-mei/annie-mei)
+Discord bot so future changes have an explicit reference to check
+against. Any change to the field names, types, or ID representation
+listed here must be coordinated in **both** repos.
 
 The bot mirrors this document at
-[`../../annie-mei/docs/oauth-contract.md`](../../annie-mei/docs/oauth-contract.md).
+[`annie-mei/docs/oauth-contract.md`](https://github.com/annie-mei/annie-mei/blob/main/docs/oauth-contract.md).
 
 ## Overview
 
@@ -102,7 +102,7 @@ The bot's `/register` command builds an opaque `ctx` query parameter
 that this service consumes at `/oauth/anilist/start`. It is a
 base64-url-encoded JSON payload signed with HMAC-SHA256 using the
 shared `OAUTH_CONTEXT_SIGNING_SECRET`. Bot-side construction lives in
-[`annie-mei/src/utils/oauth/mod.rs`](../../annie-mei/src/utils/oauth/mod.rs).
+[`annie-mei/src/utils/oauth/mod.rs`](https://github.com/annie-mei/annie-mei/blob/main/src/utils/oauth/mod.rs).
 
 | Field             | Type     | Notes                                                                                                          |
 | ----------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
