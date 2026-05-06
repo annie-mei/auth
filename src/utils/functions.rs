@@ -114,7 +114,7 @@ pub async fn fetch_viewer_identity(
                 |scope| {
                     configure_oauth_scope(
                         scope,
-                        "oauth.callback.fetch_viewer_id",
+                        "oauth.callback.fetch_viewer_identity",
                         discord_user_fingerprint,
                     )
                 },
@@ -131,7 +131,7 @@ pub async fn fetch_viewer_identity(
                 |scope| {
                     configure_oauth_scope(
                         scope,
-                        "oauth.callback.fetch_viewer_id",
+                        "oauth.callback.fetch_viewer_identity",
                         discord_user_fingerprint,
                     )
                 },
@@ -151,7 +151,7 @@ pub async fn fetch_viewer_identity(
                 |scope| {
                     configure_oauth_scope(
                         scope,
-                        "oauth.callback.fetch_viewer_id",
+                        "oauth.callback.fetch_viewer_identity",
                         discord_user_fingerprint,
                     )
                 },
