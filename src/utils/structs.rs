@@ -76,6 +76,7 @@ pub struct TokenErrorResponse {
 pub struct OAuthCredential {
     pub discord_user_id: String,
     pub anilist_id: i64,
+    pub anilist_username: Option<String>,
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub token_expires_at: Option<DateTime<Utc>>,
@@ -89,7 +90,11 @@ impl fmt::Debug for OAuthCredential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OAuthCredential")
             .field("discord_user_id", &"[REDACTED]")
-            .field("anilist_id", &self.anilist_id)
+            .field("anilist_id", &"[REDACTED]")
+            .field(
+                "anilist_username",
+                &self.anilist_username.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("access_token", &"[REDACTED]")
             .field(
                 "refresh_token",
@@ -139,6 +144,7 @@ pub struct ViewerData {
 #[derive(Deserialize)]
 pub struct Viewer {
     pub id: i64,
+    pub name: String,
 }
 
 /// Carries the Discord user ID recovered from the validated OAuth session.
@@ -221,6 +227,7 @@ mod tests {
         let credential = super::OAuthCredential {
             discord_user_id: "123456789012345678".to_string(),
             anilist_id: 42,
+            anilist_username: Some("AniUser".to_string()),
             access_token: "access_secret".to_string(),
             refresh_token: Some("refresh_secret".to_string()),
             token_expires_at: Some(now),
@@ -235,7 +242,9 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("access_secret"));
         assert!(!debug.contains("refresh_secret"));
+        assert!(!debug.contains("42"));
         assert!(!debug.contains("123456789012345678"));
+        assert!(!debug.contains("AniUser"));
     }
 
     #[test]

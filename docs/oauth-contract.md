@@ -47,12 +47,15 @@ shared Postgres database — it has no Diesel-managed tables of its own.
 Source of truth for **linked** AniList accounts. Migrations live in
 [`migrations/20260328000001_create_oauth_credentials.up.sql`](../migrations/20260328000001_create_oauth_credentials.up.sql)
 and
-[`migrations/20260401000003_add_oauth_credential_relink_fields.up.sql`](../migrations/20260401000003_add_oauth_credential_relink_fields.up.sql).
+[`migrations/20260401000003_add_oauth_credential_relink_fields.up.sql`](../migrations/20260401000003_add_oauth_credential_relink_fields.up.sql),
+plus
+[`migrations/20260505000001_add_anilist_username_to_oauth_credentials.up.sql`](../migrations/20260505000001_add_anilist_username_to_oauth_credentials.up.sql).
 
 | Column                | Type            | Notes                                                                           |
 | --------------------- | --------------- | ------------------------------------------------------------------------------- |
 | `discord_user_id`     | `TEXT` (PK)     | Raw Discord snowflake **as a string** (matches the bot's `user.id.get().to_string()`). |
 | `anilist_id`          | `BIGINT`        | AniList user ID. Unique across the table.                                       |
+| `anilist_username`    | `TEXT NULL`     | Public AniList username captured from the OAuth viewer response for friendly linked-account displays. |
 | `access_token`        | `TEXT`          | AniList OAuth access token.                                                     |
 | `refresh_token`       | `TEXT NULL`     | AniList OAuth refresh token, when issued.                                       |
 | `token_expires_at`    | `TIMESTAMPTZ NULL` | Token expiry, when AniList provides one.                                        |
@@ -65,6 +68,12 @@ and
 [`src/utils/functions.rs`](../src/utils/functions.rs), called from
 [`src/routes/authorized.rs`](../src/routes/authorized.rs) on a
 successful AniList token exchange.
+
+`anilist_username` is nullable so existing linked users can keep working
+after the migration. It is populated on the next successful OAuth
+callback/relink. Existing rows can be backfilled by querying AniList for
+each stored `anilist_id` and updating `anilist_username`, or users can
+run `/register` again after `/unregister` to relink.
 
 **Bot reads:** `OAuthCredential::get_by_discord_id` (used by
 `/whoami`) and `OAuthCredential::get_by_discord_ids` (used by the
@@ -142,13 +151,17 @@ When making one of those changes:
 
 `oauth_credentials.discord_user_id` and `oauth_sessions.discord_user_id`
 intentionally store the raw Discord snowflake so that `/register`,
-`/whoami`, and `/unregister` can all match on the same value. **Logs,
-spans, and Sentry telemetry must not include the raw snowflake.** Use
+`/whoami`, and `/unregister` can all match on the same value. The
+`oauth_credentials.anilist_id` and `oauth_credentials.anilist_username`
+fields are also user-identifying account-linkage data. **Logs, spans,
+metrics labels, breadcrumbs, and Sentry telemetry must not include any
+of those raw identifiers.** Use
 `utils::observability::identifier_fingerprint` (this service) or
-`crate::utils::privacy::hash_user_id` (bot) to emit a salted hash
-instead. Both helpers use the shared `USERID_HASH_SALT` environment
-variable so fingerprints correlate across repos; keep that variable
-listed in the [README environment variables](../README.md#environment-variables).
+`crate::utils::privacy::hash_user_id` (bot) to emit a salted hash when a
+stable correlation key is needed. Both helpers use the shared
+`USERID_HASH_SALT` environment variable so fingerprints correlate across
+repos; keep that variable listed in the
+[README environment variables](../README.md#environment-variables).
 
 The `ctx` query parameter on `/oauth/anilist/start` is base64url-encoded
 JSON plus a signature, not encrypted data. It contains raw
