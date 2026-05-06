@@ -1,7 +1,7 @@
 use crate::utils::{
     functions::{
-        UpsertOAuthCredentialsError, exchange_code_for_token, fetch_viewer_id, token_expires_at,
-        upsert_oauth_credentials,
+        LinkedAniListAccount, UpsertOAuthCredentialsError, exchange_code_for_token,
+        fetch_viewer_identity, token_expires_at, upsert_oauth_credentials,
     },
     observability::{configure_oauth_scope, identifier_fingerprint, record_identifier_fingerprint},
     structs::{MyState, StateToken, StateTokenError},
@@ -79,7 +79,7 @@ pub async fn authorized(
     let token_expires_at = token_expires_at(token_response.expires_in);
 
     info!("Fetching User data ...");
-    let anilist_id = match fetch_viewer_id(
+    let viewer = match fetch_viewer_identity(
         &state.client,
         state.user_endpoint.as_str(),
         &token_response.access_token,
@@ -87,14 +87,14 @@ pub async fn authorized(
     )
     .await
     {
-        Ok(user_id) => {
+        Ok(viewer) => {
             record_identifier_fingerprint(
                 &span,
                 "anilist_fingerprint",
-                &user_id.to_string(),
+                &viewer.id.to_string(),
                 &state.user_id_hash_salt,
             );
-            user_id
+            viewer
         }
         Err(error) => return callback_error(error.message(), error.status()),
     };
@@ -102,7 +102,10 @@ pub async fn authorized(
 
     if let Err(error) = upsert_oauth_credentials(
         &state_token.0,
-        anilist_id,
+        LinkedAniListAccount {
+            id: viewer.id,
+            username: &viewer.name,
+        },
         &token_response.access_token,
         token_response.refresh_token.as_deref(),
         token_expires_at,
@@ -286,7 +289,9 @@ mod tests {
     use crate::{
         routes::start::start,
         utils::{
-            functions::{fetch_credential_by_discord_user, upsert_oauth_credentials},
+            functions::{
+                LinkedAniListAccount, fetch_credential_by_discord_user, upsert_oauth_credentials,
+            },
             structs::MyState,
         },
     };
@@ -388,7 +393,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/graphql"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": { "Viewer": { "id": 12345 } }
+                "data": { "Viewer": { "id": 12345, "name": "AniUser" } }
             })))
             .mount(&mock_server)
             .await;
@@ -425,6 +430,7 @@ mod tests {
 
         assert_eq!(persisted.discord_user_id, "555666777888");
         assert_eq!(persisted.anilist_id, 12345);
+        assert_eq!(persisted.anilist_username.as_deref(), Some("AniUser"));
         assert_eq!(persisted.access_token, "access_1");
         assert_eq!(persisted.refresh_token.as_deref(), Some("refresh_1"));
         assert!(persisted.token_expires_at.is_some());
@@ -776,7 +782,10 @@ mod tests {
     ) {
         upsert_oauth_credentials(
             "existing_user",
-            12345,
+            LinkedAniListAccount {
+                id: 12345,
+                username: "ExistingUser",
+            },
             "existing_access",
             None,
             None,
@@ -802,7 +811,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/graphql"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": { "Viewer": { "id": 12345 } }
+                "data": { "Viewer": { "id": 12345, "name": "AniUser" } }
             })))
             .mount(&mock_server)
             .await;

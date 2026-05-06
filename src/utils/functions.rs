@@ -2,7 +2,7 @@ use crate::utils::observability::{
     configure_oauth_scope, identifier_fingerprint, record_identifier_fingerprint,
 };
 use crate::utils::structs::{
-    OAuthContextPayload, OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse,
+    OAuthContextPayload, OAuthCredential, OAuthSession, TokenErrorResponse, TokenResponse, Viewer,
     ViewerResponse,
 };
 
@@ -26,6 +26,12 @@ pub const RELINK_REQUIRED_MESSAGE: &str = "Your AniList link has expired or need
 pub enum UpsertOAuthCredentialsError {
     AlreadyLinked,
     Db(sqlx::Error),
+}
+
+#[derive(Clone, Copy)]
+pub struct LinkedAniListAccount<'a> {
+    pub id: i64,
+    pub username: &'a str,
 }
 
 #[derive(Debug)]
@@ -82,16 +88,17 @@ pub enum OAuthContextError {
 }
 
 #[tracing::instrument(skip(client, access_token))]
-pub async fn fetch_viewer_id(
+pub async fn fetch_viewer_identity(
     client: &reqwest::Client,
     user_endpoint: &str,
     access_token: &str,
     discord_user_fingerprint: Option<&str>,
-) -> Result<i64, ViewerFetchError> {
+) -> Result<Viewer, ViewerFetchError> {
     const USER_QUERY: &str = "
     query {
         Viewer {
             id
+            name
         }
     }
     ";
@@ -107,7 +114,7 @@ pub async fn fetch_viewer_id(
                 |scope| {
                     configure_oauth_scope(
                         scope,
-                        "oauth.callback.fetch_viewer_id",
+                        "oauth.callback.fetch_viewer_identity",
                         discord_user_fingerprint,
                     )
                 },
@@ -124,7 +131,7 @@ pub async fn fetch_viewer_id(
                 |scope| {
                     configure_oauth_scope(
                         scope,
-                        "oauth.callback.fetch_viewer_id",
+                        "oauth.callback.fetch_viewer_identity",
                         discord_user_fingerprint,
                     )
                 },
@@ -144,7 +151,7 @@ pub async fn fetch_viewer_id(
                 |scope| {
                     configure_oauth_scope(
                         scope,
-                        "oauth.callback.fetch_viewer_id",
+                        "oauth.callback.fetch_viewer_identity",
                         discord_user_fingerprint,
                     )
                 },
@@ -156,7 +163,7 @@ pub async fn fetch_viewer_id(
             )
         })?;
 
-    Ok(viewer_response.data.viewer.id)
+    Ok(viewer_response.data.viewer)
 }
 
 #[tracing::instrument(skip(client, client_secret, code))]
@@ -290,12 +297,12 @@ pub fn token_expires_at(expires_in_seconds: Option<i64>) -> Option<DateTime<Utc>
 }
 
 #[tracing::instrument(
-    skip(access_token, refresh_token, discord_user_id, user_id_hash_salt, db),
+    skip(access_token, refresh_token, discord_user_id, anilist_account, user_id_hash_salt, db),
     fields(discord_user_fingerprint = tracing::field::Empty)
 )]
 pub async fn upsert_oauth_credentials(
     discord_user_id: &str,
-    anilist_id: i64,
+    anilist_account: LinkedAniListAccount<'_>,
     access_token: &str,
     refresh_token: Option<&str>,
     token_expires_at: Option<DateTime<Utc>>,
@@ -309,9 +316,10 @@ pub async fn upsert_oauth_credentials(
         user_id_hash_salt,
     );
 
-    if let Some(existing) = fetch_credential_by_anilist_id(anilist_id, user_id_hash_salt, db)
-        .await
-        .map_err(UpsertOAuthCredentialsError::Db)?
+    if let Some(existing) =
+        fetch_credential_by_anilist_id(anilist_account.id, user_id_hash_salt, db)
+            .await
+            .map_err(UpsertOAuthCredentialsError::Db)?
         && existing.discord_user_id != discord_user_id
     {
         return Err(UpsertOAuthCredentialsError::AlreadyLinked);
@@ -319,10 +327,11 @@ pub async fn upsert_oauth_credentials(
 
     sqlx::query(
         "INSERT INTO oauth_credentials \
-         (discord_user_id, anilist_id, access_token, refresh_token, token_expires_at, token_updated_at) \
-         VALUES ($1, $2, $3, $4, $5, NOW()) \
+         (discord_user_id, anilist_id, anilist_username, access_token, refresh_token, token_expires_at, token_updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, NOW()) \
          ON CONFLICT (discord_user_id) DO UPDATE SET \
              anilist_id = EXCLUDED.anilist_id, \
+             anilist_username = EXCLUDED.anilist_username, \
              access_token = EXCLUDED.access_token, \
              refresh_token = EXCLUDED.refresh_token, \
              token_expires_at = EXCLUDED.token_expires_at, \
@@ -331,7 +340,8 @@ pub async fn upsert_oauth_credentials(
              relink_reason = NULL",
     )
     .bind(discord_user_id)
-    .bind(anilist_id)
+    .bind(anilist_account.id)
+    .bind(anilist_account.username)
     .bind(access_token)
     .bind(refresh_token)
     .bind(token_expires_at)
@@ -451,7 +461,7 @@ pub async fn fetch_credential_by_discord_user(
     );
 
     sqlx::query_as::<_, OAuthCredential>(
-        "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
+        "SELECT discord_user_id, anilist_id, anilist_username, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
          FROM oauth_credentials WHERE discord_user_id = $1",
     )
@@ -478,7 +488,7 @@ pub async fn fetch_credential_by_anilist_id(
     );
 
     sqlx::query_as::<_, OAuthCredential>(
-        "SELECT discord_user_id, anilist_id, access_token, refresh_token, \
+        "SELECT discord_user_id, anilist_id, anilist_username, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
          FROM oauth_credentials WHERE anilist_id = $1",
     )
@@ -707,9 +717,9 @@ pub async fn consume_oauth_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        OAuthContextError, SessionConsumeError, UpsertOAuthCredentialsError, UsableCredentialError,
-        consume_oauth_session, fetch_credential_by_anilist_id, fetch_credential_by_discord_user,
-        fetch_usable_oauth_credential, insert_oauth_session,
+        LinkedAniListAccount, OAuthContextError, SessionConsumeError, UpsertOAuthCredentialsError,
+        UsableCredentialError, consume_oauth_session, fetch_credential_by_anilist_id,
+        fetch_credential_by_discord_user, fetch_usable_oauth_credential, insert_oauth_session,
         mark_expired_oauth_credential_relink_required, mark_oauth_credentials_relink_required,
         token_expires_at, upsert_oauth_credentials, verify_oauth_context,
     };
@@ -721,6 +731,10 @@ mod tests {
     use sqlx::{Pool, Postgres};
 
     const TEST_USERID_HASH_SALT: &str = "test-userid-hash-salt";
+
+    fn linked_account(id: i64, username: &'static str) -> LinkedAniListAccount<'static> {
+        LinkedAniListAccount { id, username }
+    }
 
     fn make_ctx(payload: serde_json::Value, secret: &str) -> String {
         type HmacSha256 = Hmac<Sha256>;
@@ -854,7 +868,7 @@ mod tests {
     async fn upsert_inserts_new_credential(pool: Pool<Postgres>) {
         upsert_oauth_credentials(
             "111222333444555666",
-            987654321,
+            linked_account(987654321, "AniUser"),
             "access_tok",
             Some("refresh_tok"),
             Some(Utc::now() + Duration::hours(1)),
@@ -872,6 +886,7 @@ mod tests {
 
         assert_eq!(cred.discord_user_id, "111222333444555666");
         assert_eq!(cred.anilist_id, 987654321);
+        assert_eq!(cred.anilist_username.as_deref(), Some("AniUser"));
         assert_eq!(cred.access_token, "access_tok");
         assert_eq!(cred.refresh_token.as_deref(), Some("refresh_tok"));
         assert!(cred.token_expires_at.is_some());
@@ -883,7 +898,7 @@ mod tests {
     async fn upsert_updates_existing_credential(pool: Pool<Postgres>) {
         upsert_oauth_credentials(
             "user1",
-            111,
+            linked_account(111, "OldName"),
             "old_token",
             None,
             None,
@@ -904,7 +919,7 @@ mod tests {
 
         upsert_oauth_credentials(
             "user1",
-            111,
+            linked_account(111, "NewName"),
             "new_token",
             Some("new_refresh"),
             None,
@@ -920,6 +935,7 @@ mod tests {
             .expect("credential should exist");
 
         assert_eq!(cred.access_token, "new_token");
+        assert_eq!(cred.anilist_username.as_deref(), Some("NewName"));
         assert_eq!(cred.refresh_token.as_deref(), Some("new_refresh"));
         assert!(cred.relink_required_at.is_none());
         assert!(cred.relink_reason.is_none());
@@ -931,7 +947,7 @@ mod tests {
     async fn fetch_usable_oauth_credential_marks_expired_tokens_for_relink(pool: Pool<Postgres>) {
         upsert_oauth_credentials(
             "expired_user",
-            777,
+            linked_account(777, "ExpiredUser"),
             "expired_access",
             None,
             Some(Utc::now() - Duration::minutes(5)),
@@ -965,7 +981,7 @@ mod tests {
     ) {
         upsert_oauth_credentials(
             "already_flagged_user",
-            778,
+            linked_account(778, "AlreadyFlaggedUser"),
             "expired_access",
             None,
             Some(Utc::now() - Duration::minutes(5)),
@@ -1022,7 +1038,7 @@ mod tests {
     ) {
         upsert_oauth_credentials(
             "race_user",
-            999,
+            linked_account(999, "RaceUser"),
             "fresh_access",
             None,
             Some(Utc::now() + Duration::hours(2)),
@@ -1061,7 +1077,7 @@ mod tests {
     ) {
         upsert_oauth_credentials(
             "already_marked_user",
-            1_000,
+            linked_account(1_000, "AlreadyMarkedUser"),
             "expired_access",
             None,
             Some(Utc::now() - Duration::minutes(5)),
@@ -1120,7 +1136,7 @@ mod tests {
     async fn fetch_usable_oauth_credential_returns_active_credentials(pool: Pool<Postgres>) {
         upsert_oauth_credentials(
             "active_user",
-            888,
+            linked_account(888, "ActiveUser"),
             "active_access",
             None,
             Some(Utc::now() + Duration::hours(6)),
@@ -1155,7 +1171,7 @@ mod tests {
     async fn fetch_by_anilist_id_finds_correct_credential(pool: Pool<Postgres>) {
         upsert_oauth_credentials(
             "user_a",
-            42,
+            linked_account(42, "UserA"),
             "tok_a",
             None,
             None,
@@ -1172,6 +1188,7 @@ mod tests {
 
         assert_eq!(cred.discord_user_id, "user_a");
         assert_eq!(cred.anilist_id, 42);
+        assert_eq!(cred.anilist_username.as_deref(), Some("UserA"));
 
         pool.close().await;
     }
@@ -1191,7 +1208,7 @@ mod tests {
     async fn upsert_rejects_anilist_id_linked_to_another_discord_user(pool: Pool<Postgres>) {
         upsert_oauth_credentials(
             "user_a",
-            42,
+            linked_account(42, "UserA"),
             "tok_a",
             None,
             None,
@@ -1203,7 +1220,7 @@ mod tests {
 
         let error = upsert_oauth_credentials(
             "user_b",
-            42,
+            linked_account(42, "UserB"),
             "tok_b",
             None,
             None,
