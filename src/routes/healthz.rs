@@ -7,11 +7,12 @@ use rocket::{
     tokio::time::{Duration, timeout},
 };
 
-const HEALTHZ_DATABASE_TIMEOUT: Duration = Duration::from_secs(2);
+const DATABASE_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
-pub struct HealthChecks<'a> {
+pub struct HealthServices<'a> {
     database: &'a str,
 }
 
@@ -19,63 +20,82 @@ pub struct HealthChecks<'a> {
 #[serde(crate = "rocket::serde")]
 pub struct HealthResponse<'a> {
     status: &'a str,
-    checks: HealthChecks<'a>,
+    version: &'a str,
+    services: HealthServices<'a>,
 }
 
-#[get("/healthz")]
-#[tracing::instrument(name = "healthz", skip(state))]
-pub async fn healthz(state: &State<MyState>) -> Custom<Json<HealthResponse<'static>>> {
+#[tracing::instrument(name = "health.database", skip(pool))]
+async fn check_database(pool: &sqlx::PgPool) -> bool {
     let db_result = timeout(
-        HEALTHZ_DATABASE_TIMEOUT,
-        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.pool),
+        DATABASE_CHECK_TIMEOUT,
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool),
     )
     .await;
 
     match db_result {
-        Ok(Ok(_)) => Custom(
-            Status::Ok,
-            Json(HealthResponse {
-                status: "healthy",
-                checks: HealthChecks { database: "ok" },
-            }),
-        ),
-        Ok(Err(_)) => {
-            error!("Health check failed for database dependency");
-
-            Custom(
-                Status::ServiceUnavailable,
-                Json(HealthResponse {
-                    status: "unhealthy",
-                    checks: HealthChecks { database: "error" },
-                }),
-            )
+        Ok(Ok(_)) => true,
+        Ok(Err(error)) => {
+            tracing::error!(error = %error, "Health check failed for database dependency");
+            false
         }
         Err(_) => {
-            error!("Health check timed out waiting for database dependency");
-
-            Custom(
-                Status::ServiceUnavailable,
-                Json(HealthResponse {
-                    status: "unhealthy",
-                    checks: HealthChecks { database: "error" },
-                }),
-            )
+            tracing::error!("Health check timed out waiting for database dependency");
+            false
         }
     }
 }
 
+#[tracing::instrument(name = "health.response", skip_all)]
+fn build_health_response(database_ok: Option<bool>) -> Custom<Json<HealthResponse<'static>>> {
+    let healthy = database_ok.unwrap_or(true);
+    let status = if healthy {
+        Status::Ok
+    } else {
+        Status::ServiceUnavailable
+    };
+
+    let database_status = match database_ok {
+        Some(true) => "up",
+        Some(false) => "down",
+        None => "not_checked",
+    };
+
+    Custom(
+        status,
+        Json(HealthResponse {
+            status: if healthy { "healthy" } else { "unhealthy" },
+            version: VERSION,
+            services: HealthServices {
+                database: database_status,
+            },
+        }),
+    )
+}
+
+#[get("/healthz")]
+#[tracing::instrument(name = "healthz")]
+pub async fn healthz() -> Custom<Json<HealthResponse<'static>>> {
+    build_health_response(None)
+}
+
+#[get("/readyz")]
+#[tracing::instrument(name = "readyz", skip(state))]
+pub async fn readyz(state: &State<MyState>) -> Custom<Json<HealthResponse<'static>>> {
+    let database_ok = check_database(&state.pool).await;
+
+    build_health_response(Some(database_ok))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::healthz;
+    use super::{VERSION, build_health_response, healthz, readyz};
     use crate::utils::structs::MyState;
     use rocket::{Config, http::Status, local::asynchronous::Client, routes};
+    use serde_json::Value;
     use sqlx::{Pool, Postgres};
 
-    fn build_test_rocket(pool: Pool<Postgres>) -> rocket::Rocket<rocket::Build> {
-        let figment =
-            Config::figment().merge(("secret_key", "0123456789abcdef0123456789abcdef0123456789A="));
-
-        let state = MyState {
+    fn build_test_state(pool: Pool<Postgres>) -> MyState {
+        MyState {
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
             redirect_uri: "http://127.0.0.1:8000/oauth/anilist/callback".to_string(),
@@ -87,50 +107,92 @@ mod tests {
             user_endpoint: "https://graphql.anilist.co".to_string(),
             client: reqwest::Client::new(),
             pool,
-        };
-
-        rocket::custom(figment)
-            .mount("/", routes![healthz])
-            .manage(state)
+        }
     }
 
-    #[sqlx::test(migrations = "./migrations")]
-    async fn healthz_returns_healthy_when_database_is_available(pool: Pool<Postgres>) {
-        let client = Client::tracked(build_test_rocket(pool.clone()))
-            .await
-            .expect("rocket client should build");
+    fn test_figment() -> rocket::figment::Figment {
+        Config::figment().merge(("secret_key", "0123456789abcdef0123456789abcdef0123456789A="))
+    }
 
-        let response = client.get("/healthz").dispatch().await;
+    fn build_healthz_rocket() -> rocket::Rocket<rocket::Build> {
+        rocket::custom(test_figment()).mount("/", routes![healthz])
+    }
 
-        assert_eq!(response.status(), Status::Ok);
+    fn build_test_rocket(pool: Pool<Postgres>) -> rocket::Rocket<rocket::Build> {
+        rocket::custom(test_figment())
+            .mount("/", routes![healthz, readyz])
+            .manage(build_test_state(pool))
+    }
+
+    async fn response_json(response: rocket::local::asynchronous::LocalResponse<'_>) -> Value {
         let body = response
             .into_string()
             .await
             .expect("health endpoint should return body");
-        assert!(body.contains("\"status\":\"healthy\""));
-        assert!(body.contains("\"database\":\"ok\""));
+
+        serde_json::from_str(&body).expect("health endpoint should return JSON")
+    }
+
+    #[test]
+    fn health_response_reports_process_liveness_without_dependency_checks() {
+        let response = build_health_response(None);
+
+        assert_eq!(response.0, Status::Ok);
+        assert_eq!(response.1.status, "healthy");
+        assert_eq!(response.1.version, VERSION);
+        assert_eq!(response.1.services.database, "not_checked");
+    }
+
+    #[test]
+    fn healthz_returns_liveness_shape() {
+        rocket::async_test(async {
+            let client = Client::tracked(build_healthz_rocket())
+                .await
+                .expect("rocket client should build");
+
+            let response = client.get("/healthz").dispatch().await;
+
+            assert_eq!(response.status(), Status::Ok);
+            let body = response_json(response).await;
+            assert_eq!(body["status"], "healthy");
+            assert_eq!(body["version"], VERSION);
+            assert_eq!(body["services"]["database"], "not_checked");
+        });
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn readyz_returns_healthy_when_database_is_available(pool: Pool<Postgres>) {
+        let client = Client::tracked(build_test_rocket(pool.clone()))
+            .await
+            .expect("rocket client should build");
+
+        let response = client.get("/readyz").dispatch().await;
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response_json(response).await;
+        assert_eq!(body["status"], "healthy");
+        assert_eq!(body["version"], VERSION);
+        assert_eq!(body["services"]["database"], "up");
 
         drop(client);
         pool.close().await;
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn healthz_returns_unhealthy_when_database_is_unavailable(pool: Pool<Postgres>) {
+    async fn readyz_returns_unhealthy_when_database_is_unavailable(pool: Pool<Postgres>) {
         let client = Client::tracked(build_test_rocket(pool.clone()))
             .await
             .expect("rocket client should build");
 
         pool.close().await;
 
-        let response = client.get("/healthz").dispatch().await;
+        let response = client.get("/readyz").dispatch().await;
 
         assert_eq!(response.status(), Status::ServiceUnavailable);
-        let body = response
-            .into_string()
-            .await
-            .expect("health endpoint should return body");
-        assert!(body.contains("\"status\":\"unhealthy\""));
-        assert!(body.contains("\"database\":\"error\""));
+        let body = response_json(response).await;
+        assert_eq!(body["status"], "unhealthy");
+        assert_eq!(body["version"], VERSION);
+        assert_eq!(body["services"]["database"], "down");
 
         drop(client);
     }
