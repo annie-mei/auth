@@ -1,12 +1,13 @@
 # auth
 
-Auth server for AniList OAuth for Annie Mei.
+Auth server for AniList OAuth for Annie Mei. It also owns the HTTP health and readiness endpoints for the Annie Mei stack.
 
 ## Local development
 
 1. Copy `.env.example` to `.env`.
 2. Fill in the AniList OAuth credentials, Postgres connection string, and a Rocket `ROCKET_SECRET_KEY`.
 3. Start the service with `cargo run`.
+4. Verify liveness with `curl http://127.0.0.1:8000/healthz` and readiness with `curl http://127.0.0.1:8000/readyz`.
 
 `SENTRY_DSN` is optional in local development. If it is unset, the service will start without Sentry.
 
