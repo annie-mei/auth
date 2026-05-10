@@ -33,11 +33,11 @@ async fn check_database(pool: &sqlx::PgPool) -> bool {
     match db_result {
         Ok(Ok(_)) => true,
         Ok(Err(error)) => {
-            tracing::error!(error = %error, "Health check failed for database dependency");
+            error!("Health check failed for database dependency: {error}");
             false
         }
         Err(_) => {
-            tracing::error!("Health check timed out waiting for database dependency");
+            error!("Health check timed out waiting for database dependency");
             false
         }
     }
