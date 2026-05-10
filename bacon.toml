@@ -3,11 +3,9 @@
 # This is a configuration file for the bacon tool.
 #
 # Complete help on configuration: https://dystroy.org/bacon/config/
-#
-# Modeled after the sibling annie-mei bot repo, but with `check` as the
-# default job so Bacon is useful before local auth secrets are configured.
 
-default_job = "check"
+
+default_job = "dev"
 env.CARGO_TERM_COLOR = "always"
 
 [jobs.check]
