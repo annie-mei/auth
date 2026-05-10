@@ -8,7 +8,6 @@ use rocket::{
 };
 
 const DATABASE_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -20,7 +19,6 @@ pub struct HealthServices<'a> {
 #[serde(crate = "rocket::serde")]
 pub struct HealthResponse<'a> {
     status: &'a str,
-    version: &'a str,
     services: HealthServices<'a>,
 }
 
@@ -64,7 +62,6 @@ fn build_health_response(database_ok: Option<bool>) -> Custom<Json<HealthRespons
         status,
         Json(HealthResponse {
             status: if healthy { "healthy" } else { "unhealthy" },
-            version: VERSION,
             services: HealthServices {
                 database: database_status,
             },
@@ -88,7 +85,7 @@ pub async fn readyz(state: &State<MyState>) -> Custom<Json<HealthResponse<'stati
 
 #[cfg(test)]
 mod tests {
-    use super::{VERSION, build_health_response, healthz, readyz};
+    use super::{build_health_response, healthz, readyz};
     use crate::utils::structs::MyState;
     use rocket::{Config, http::Status, local::asynchronous::Client, routes};
     use serde_json::Value;
@@ -139,7 +136,6 @@ mod tests {
 
         assert_eq!(response.0, Status::Ok);
         assert_eq!(response.1.status, "healthy");
-        assert_eq!(response.1.version, VERSION);
         assert_eq!(response.1.services.database, "not_checked");
     }
 
@@ -149,7 +145,6 @@ mod tests {
 
         assert_eq!(response.0, Status::Ok);
         assert_eq!(response.1.status, "healthy");
-        assert_eq!(response.1.version, VERSION);
         assert_eq!(response.1.services.database, "up");
     }
 
@@ -159,7 +154,6 @@ mod tests {
 
         assert_eq!(response.0, Status::ServiceUnavailable);
         assert_eq!(response.1.status, "unhealthy");
-        assert_eq!(response.1.version, VERSION);
         assert_eq!(response.1.services.database, "down");
     }
 
@@ -175,7 +169,6 @@ mod tests {
             assert_eq!(response.status(), Status::Ok);
             let body = response_json(response).await;
             assert_eq!(body["status"], "healthy");
-            assert_eq!(body["version"], VERSION);
             assert_eq!(body["services"]["database"], "not_checked");
         });
     }
@@ -191,7 +184,6 @@ mod tests {
         assert_eq!(response.status(), Status::Ok);
         let body = response_json(response).await;
         assert_eq!(body["status"], "healthy");
-        assert_eq!(body["version"], VERSION);
         assert_eq!(body["services"]["database"], "up");
 
         drop(client);
@@ -211,7 +203,6 @@ mod tests {
         assert_eq!(response.status(), Status::ServiceUnavailable);
         let body = response_json(response).await;
         assert_eq!(body["status"], "unhealthy");
-        assert_eq!(body["version"], VERSION);
         assert_eq!(body["services"]["database"], "down");
 
         drop(client);
