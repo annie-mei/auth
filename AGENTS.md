@@ -20,7 +20,7 @@ src/
 |- routes/
 |  |- start.rs          # /oauth/anilist/start redirect to AniList OAuth
 |  |- authorized.rs     # /oauth/anilist/callback token exchange + HTML pages
-|  |- healthz.rs        # /healthz dependency-aware health check endpoint
+|  |- healthz.rs        # /healthz liveness and /readyz readiness endpoints
 |  |- catchers.rs       # Custom error catchers (404, etc.)
 |  `- mod.rs
 `- utils/

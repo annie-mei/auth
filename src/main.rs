@@ -4,7 +4,12 @@ pub mod routes;
 pub mod utils;
 
 use crate::{
-    routes::{authorized::authorized, catchers::not_found, healthz::healthz, start::start},
+    routes::{
+        authorized::authorized,
+        catchers::not_found,
+        healthz::{healthz, readyz},
+        start::start,
+    },
     utils::{
         consts::{ANILIST_TOKEN, ANILIST_USER_BASE},
         structs::MyState,
@@ -184,7 +189,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
     let figment = rocket::Config::figment().merge(("secret_key", config.rocket_secret_key.clone()));
 
     Ok(rocket::custom(figment)
-        .mount("/", routes![healthz, start, authorized])
+        .mount("/", routes![healthz, readyz, start, authorized])
         .mount("/static", FileServer::from(relative!("static")))
         .register("/", catchers![not_found])
         .manage(state))
