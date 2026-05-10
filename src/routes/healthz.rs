@@ -144,6 +144,26 @@ mod tests {
     }
 
     #[test]
+    fn ready_response_reports_healthy_when_database_is_up() {
+        let response = build_health_response(Some(true));
+
+        assert_eq!(response.0, Status::Ok);
+        assert_eq!(response.1.status, "healthy");
+        assert_eq!(response.1.version, VERSION);
+        assert_eq!(response.1.services.database, "up");
+    }
+
+    #[test]
+    fn ready_response_reports_unhealthy_when_database_is_down() {
+        let response = build_health_response(Some(false));
+
+        assert_eq!(response.0, Status::ServiceUnavailable);
+        assert_eq!(response.1.status, "unhealthy");
+        assert_eq!(response.1.version, VERSION);
+        assert_eq!(response.1.services.database, "down");
+    }
+
+    #[test]
     fn healthz_returns_liveness_shape() {
         rocket::async_test(async {
             let client = Client::tracked(build_healthz_rocket())
