@@ -226,7 +226,7 @@ mod tests {
         let now = chrono::Utc::now();
         let credential = super::OAuthCredential {
             discord_user_id: "123456789012345678".to_string(),
-            anilist_id: 42,
+            anilist_id: 9_876_543_219_876_543,
             anilist_username: Some("AniUser".to_string()),
             access_token: "access_secret".to_string(),
             refresh_token: Some("refresh_secret".to_string()),
@@ -242,7 +242,8 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("access_secret"));
         assert!(!debug.contains("refresh_secret"));
-        assert!(!debug.contains("42"));
+        assert!(debug.contains("anilist_id: \"[REDACTED]\""));
+        assert!(!debug.contains("9876543219876543"));
         assert!(!debug.contains("123456789012345678"));
         assert!(!debug.contains("AniUser"));
     }
