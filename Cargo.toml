@@ -25,7 +25,7 @@ reqwest = { version = "0.13", default-features = false, features = [
   "json",
   "rustls",
 ] }
-rocket = { version = "0.5.1", features = ["json", "secrets"] }
+rocket = { version = "0.5.1", default-features = false, features = ["json", "secrets"] }
 sentry = { version = "0.48.2", default-features = false, features = [
   "backtrace",
   "contexts",
