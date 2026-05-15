@@ -1,5 +1,7 @@
 # auth
 
+<!-- Environment verified -->
+
 Auth server for AniList OAuth for Annie Mei. It also owns the HTTP health and readiness endpoints for the Annie Mei stack.
 
 ## Local development
