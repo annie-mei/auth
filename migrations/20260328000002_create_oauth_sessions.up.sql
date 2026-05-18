@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS oauth_sessions (
+CREATE TABLE IF NOT EXISTS auth.oauth_sessions (
     state           TEXT        PRIMARY KEY,
     discord_user_id TEXT        NOT NULL,
     expires_at      TIMESTAMPTZ NOT NULL,

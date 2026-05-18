@@ -1,2 +1,2 @@
-ALTER TABLE oauth_credentials
-ADD COLUMN anilist_username TEXT NULL;
+ALTER TABLE auth.oauth_credentials
+ADD COLUMN IF NOT EXISTS anilist_username TEXT NULL;

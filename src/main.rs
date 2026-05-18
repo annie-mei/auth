@@ -18,14 +18,14 @@ use crate::{
 use rocket::fs::{FileServer, relative};
 
 use anyhow::{Context, Result};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 
 const DEFAULT_CONTEXT_TTL_SECONDS: i64 = 300;
 const DEFAULT_STATE_TTL_SECONDS: i64 = 300;
-
 struct AppConfig {
     sentry_dsn: Option<String>,
     sentry_environment: Option<String>,
@@ -151,6 +151,15 @@ fn init_sentry(
     ))
 }
 
+async fn prepare_auth_schema(pool: &sqlx::PgPool) -> Result<()> {
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS auth")
+        .execute(pool)
+        .await
+        .context("Failed to create auth schema")?;
+
+    Ok(())
+}
+
 async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build>> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -158,10 +167,22 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
         .await
         .context("Failed to connect to the database")?;
 
+    prepare_auth_schema(&pool).await?;
+
+    let migration_options = PgConnectOptions::from_str(&config.database_url)
+        .context("Failed to parse database URL")?
+        .options([("search_path", "auth,public")]);
+    let migration_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(migration_options)
+        .await
+        .context("Failed to connect to the auth migration database")?;
+
     sqlx::migrate!("./migrations")
-        .run(&pool)
+        .run(&migration_pool)
         .await
         .context("Failed to run database migrations")?;
+    migration_pool.close().await;
 
     let client = reqwest::Client::builder()
         .user_agent(concat!(

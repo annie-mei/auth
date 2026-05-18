@@ -27,6 +27,7 @@ Auth server for AniList OAuth for Annie Mei. It also owns the HTTP health and re
 ## Documentation
 
 - [OAuth data contract](docs/oauth-contract.md) — shared schema and payload contract with the [`annie-mei`](https://github.com/annie-mei/annie-mei) bot repo
+- [Database schema ownership](docs/database-schemas.md) — shared Postgres schemas, migration isolation, grants, and deployment order
 
 ## Validation
 
