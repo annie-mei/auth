@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS oauth_credentials;
+DROP TABLE IF EXISTS auth.oauth_credentials;

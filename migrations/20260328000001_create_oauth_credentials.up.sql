@@ -1,4 +1,6 @@
-CREATE TABLE IF NOT EXISTS oauth_credentials (
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE TABLE IF NOT EXISTS auth.oauth_credentials (
     discord_user_id    TEXT        PRIMARY KEY,
     anilist_id         BIGINT      NOT NULL,
     access_token       TEXT        NOT NULL,
