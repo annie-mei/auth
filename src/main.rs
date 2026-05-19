@@ -155,7 +155,7 @@ async fn prepare_auth_schema(pool: &sqlx::PgPool) -> Result<()> {
     sqlx::query("CREATE SCHEMA IF NOT EXISTS annie_auth")
         .execute(pool)
         .await
-        .context("Failed to create auth schema")?;
+        .context("Failed to create annie_auth schema")?;
 
     Ok(())
 }
