@@ -1,3 +1,3 @@
-ALTER TABLE auth.oauth_credentials
+ALTER TABLE annie_auth.oauth_credentials
 ADD COLUMN IF NOT EXISTS relink_required_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS relink_reason TEXT;

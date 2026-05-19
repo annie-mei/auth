@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS auth.oauth_sessions;
+DROP TABLE IF EXISTS annie_auth.oauth_sessions;
