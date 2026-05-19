@@ -152,7 +152,7 @@ fn init_sentry(
 }
 
 async fn prepare_auth_schema(pool: &sqlx::PgPool) -> Result<()> {
-    sqlx::query("CREATE SCHEMA IF NOT EXISTS auth")
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS annie_auth")
         .execute(pool)
         .await
         .context("Failed to create auth schema")?;
@@ -171,7 +171,7 @@ async fn build_rocket(config: &AppConfig) -> Result<rocket::Rocket<rocket::Build
 
     let migration_options = PgConnectOptions::from_str(&config.database_url)
         .context("Failed to parse database URL")?
-        .options([("search_path", "auth,public")]);
+        .options([("search_path", "annie_auth,public")]);
     let migration_pool = PgPoolOptions::new()
         .max_connections(1)
         .connect_with(migration_options)

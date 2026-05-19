@@ -326,7 +326,7 @@ pub async fn upsert_oauth_credentials(
     }
 
     sqlx::query(
-        "INSERT INTO auth.oauth_credentials \
+        "INSERT INTO annie_auth.oauth_credentials \
          (discord_user_id, anilist_id, anilist_username, access_token, refresh_token, token_expires_at, token_updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, NOW()) \
          ON CONFLICT (discord_user_id) DO UPDATE SET \
@@ -385,7 +385,7 @@ async fn mark_expired_oauth_credential_relink_required(
     );
 
     sqlx::query(
-        "UPDATE auth.oauth_credentials \
+        "UPDATE annie_auth.oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
          WHERE discord_user_id = $1 \
            AND relink_required_at IS NULL \
@@ -424,7 +424,7 @@ pub async fn mark_oauth_credentials_relink_required(
     );
 
     sqlx::query(
-        "UPDATE auth.oauth_credentials \
+        "UPDATE annie_auth.oauth_credentials \
          SET relink_required_at = NOW(), relink_reason = $2 \
          WHERE discord_user_id = $1",
     )
@@ -463,7 +463,7 @@ pub async fn fetch_credential_by_discord_user(
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, anilist_username, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
-         FROM auth.oauth_credentials WHERE discord_user_id = $1",
+         FROM annie_auth.oauth_credentials WHERE discord_user_id = $1",
     )
     .bind(discord_user_id)
     .fetch_optional(db)
@@ -490,7 +490,7 @@ pub async fn fetch_credential_by_anilist_id(
     sqlx::query_as::<_, OAuthCredential>(
         "SELECT discord_user_id, anilist_id, anilist_username, access_token, refresh_token, \
          token_expires_at, token_updated_at, relink_required_at, relink_reason, created_at \
-         FROM auth.oauth_credentials WHERE anilist_id = $1",
+         FROM annie_auth.oauth_credentials WHERE anilist_id = $1",
     )
     .bind(anilist_id)
     .fetch_optional(db)
@@ -657,7 +657,7 @@ pub async fn insert_oauth_session(
     );
 
     sqlx::query(
-        "INSERT INTO auth.oauth_sessions (state, discord_user_id, expires_at) \
+        "INSERT INTO annie_auth.oauth_sessions (state, discord_user_id, expires_at) \
          VALUES ($1, $2, NOW() + ($3 * INTERVAL '1 second'))",
     )
     .bind(state)
@@ -682,7 +682,7 @@ pub async fn consume_oauth_session(
     db: &Pool<Postgres>,
 ) -> Result<OAuthSession, SessionConsumeError> {
     let session = sqlx::query_as::<_, OAuthSession>(
-        "UPDATE auth.oauth_sessions \
+        "UPDATE annie_auth.oauth_sessions \
          SET used_at = NOW() \
          WHERE state = $1 AND used_at IS NULL AND expires_at > NOW() \
          RETURNING state, discord_user_id, expires_at, used_at, created_at",
@@ -702,7 +702,7 @@ pub async fn consume_oauth_session(
     }
 
     let diag =
-        sqlx::query_as::<_, Diag>("SELECT used_at FROM auth.oauth_sessions WHERE state = $1")
+        sqlx::query_as::<_, Diag>("SELECT used_at FROM annie_auth.oauth_sessions WHERE state = $1")
             .bind(state_val)
             .fetch_optional(db)
             .await
@@ -1293,7 +1293,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn consume_session_fails_for_expired_state(pool: Pool<Postgres>) {
         sqlx::query(
-            "INSERT INTO auth.oauth_sessions (state, discord_user_id, expires_at) \
+            "INSERT INTO annie_auth.oauth_sessions (state, discord_user_id, expires_at) \
              VALUES ($1, $2, NOW() - INTERVAL '1 minute')",
         )
         .bind("expired_state")
