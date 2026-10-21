@@ -1,5 +1,20 @@
 # Agent Instructions for Annie Mei Auth
 
+<!-- BEGIN ANNIE MEI SHARED WORKFLOW -->
+<!-- Source: annie-mei/.github/AGENTS.md. Keep this block identical in all four repos. -->
+## Annie Mei organization workflow
+
+Applies to `annie-mei/annie-mei`, `annie-mei/auth`, `annie-mei/docs`, and `annie-mei/.github`.
+
+- Every work branch must have a Linear ticket and use the ticket's suggested branch name.
+- Check existing and recent tickets before proposing a new one. Ask the user before creating a ticket.
+- PR titles must use `[ANNIE-<ticket-number>]/<description>`.
+- Do not mention or link Linear tickets in PR descriptions; branch automation supplies the link.
+- Fill the repository's existing `.github/PULL_REQUEST_TEMPLATE.md`. Do not duplicate the template in agent guidance.
+- If the repository has no PR template, reuse the existing bot template: https://github.com/annie-mei/annie-mei/blob/main/.github/PULL_REQUEST_TEMPLATE.md
+- Remove placeholder comments and unused optional sections. Record validation actually performed and replace `MODEL_NAME` with the actual model.
+<!-- END ANNIE MEI SHARED WORKFLOW -->
+
 This document is for coding agents working in `auth/`, the AniList OAuth server used by the sibling Annie Mei app in `../annie-mei`.
 
 ## Project Summary
@@ -57,8 +72,6 @@ rustfmt.toml            # formatting config
 ### Git Safety
 
 - Never commit or push directly to `main`; use a feature branch.
-- All branches should have a Linear ticket and use that ticket's branch naming.
-- Do not create tickets automatically; check for an existing ticket first and ask before creating one.
 - Never force push.
 - When git issues occur, explain the problem, present options, and ask the user how they want to resolve it.
 
@@ -74,43 +87,7 @@ Bump the version in `Cargo.toml` using semantic versioning when preparing versio
 
 ### Pull Requests
 
-- PR titles should use `[ANNIE-<ticket-number>]/<description>`.
-- PR descriptions should include `## Summary`, `## Type of Change`, `## Changes`, and `## Validation`.
-- Include `### Notes` or `## References` when implementation details or operational context matter.
 - In `## Validation`, list the exact commands run and any manual OAuth or local runtime checks.
-
-PR template:
-
-```md
-## Summary
-
-## Type of Change
-
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Refactor
-- [ ] Documentation
-- [ ] Chore
-
-## Changes
-
-- <full-commit-sha>: <what changed>
-
-### Notes (optional)
-
-### High-risk resources (optional)
-
-## Validation
-
-- [ ] <relevant cargo test / cargo clippy / manual verification steps>
-- [ ] <Discord QA or runtime verification, if applicable>
-
-## References (optional)
-
----
-
-This PR description was written by MODEL_NAME.
-```
 
 ## Build, Lint, and Test Commands
 
