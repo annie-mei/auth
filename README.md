@@ -41,6 +41,15 @@ To repeat preparation or repair the database in an orb:
 cargo test --locked
 ```
 
+The login defaults apply only when a new shell starts inside the checkout. If
+you enter it from an already-running shell, run tests with explicit defaults:
+
+```sh
+PATH="$HOME/.cargo/bin:$PATH" \
+  DATABASE_URL="${DATABASE_URL:-postgres://postgres@127.0.0.1:55432/postgres}" \
+  cargo test --locked
+```
+
 ## Environment variables
 
 - `ANILIST_CLIENT_ID`

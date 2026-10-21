@@ -46,7 +46,16 @@ fi
 
 # Persist defaults for agent commands and supervised services, without overriding
 # an explicitly configured database or changing other repositories' environment.
-touch "$HOME/.bash_profile"
+if [[ ! -f "$HOME/.bash_profile" ]]; then
+  cat > "$HOME/.bash_profile" <<'EOF'
+# Preserve the login initialization Bash used before this file existed.
+if [[ -f "$HOME/.bash_login" ]]; then
+  source "$HOME/.bash_login"
+elif [[ -f "$HOME/.profile" ]]; then
+  source "$HOME/.profile"
+fi
+EOF
+fi
 marker='# Annie Mei Auth orb environment'
 if ! grep -Fqx "$marker" "$HOME/.bash_profile"; then
   cat >> "$HOME/.bash_profile" <<EOF
