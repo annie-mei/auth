@@ -11,6 +11,45 @@ Auth server for AniList OAuth for Annie Mei. It also owns the HTTP health and re
 
 `SENTRY_DSN` is optional in local development. If it is unset, the service will start without Sentry.
 
+## Amp orbs
+
+`.agents/setup` installs the toolchain pinned in `rust-toolchain.toml` (including
+Clippy and rustfmt), fetches locked Cargo dependencies, and precompiles the test
+suite for the project snapshot. Warm setup reuses installed packages and Cargo's
+build cache. The first uncached setup takes longer while Rust and the crate graph
+compile.
+
+Setup also initializes a disposable PostgreSQL 15 cluster. `.amp/services.yaml`
+runs it under Amp supervision, and `.agents/resume` ensures it is ready after
+activation or wake. It listens only on loopback port 55432, has no portal, and uses
+trust authentication and reduced durability for local tests only. CI uses
+PostgreSQL 17; the orb uses Debian 12's packaged version.
+
+New login shells inside this checkout have Cargo on `PATH` and default
+`DATABASE_URL` to the local cluster, whose role can create SQLx test databases.
+An existing `DATABASE_URL` is preserved; use only a disposable database when
+running tests. No live credentials are needed for the test suite. To run the
+OAuth server, follow the local-development instructions above and supply real
+AniList credentials and valid signing keys separately; setup does not copy or
+generate application secrets.
+
+To repeat preparation or repair the database in an orb:
+
+```sh
+.agents/setup
+.agents/resume
+cargo test --locked
+```
+
+The login defaults apply only when a new shell starts inside the checkout. If
+you enter it from an already-running shell, run tests with explicit defaults:
+
+```sh
+PATH="$HOME/.cargo/bin:$PATH" \
+  DATABASE_URL="${DATABASE_URL:-postgres://postgres@127.0.0.1:55432/postgres}" \
+  cargo test --locked
+```
+
 ## Environment variables
 
 - `ANILIST_CLIENT_ID`
