@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+SECONDS=0
+
+echo "Installing missing system prerequisites..."
+packages=()
+for package in build-essential ca-certificates curl postgresql-15; do
+  if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+    packages+=("$package")
+  fi
+done
+if ((${#packages[@]})); then
+  sudo apt-get update
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+fi
+echo "System prerequisites ready (${SECONDS}s elapsed)."
+
+export PATH="$HOME/.cargo/bin:$PATH"
+if ! command -v rustup >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+    sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+fi
+# rustup reads the version and components from rust-toolchain.toml.
+rustup show active-toolchain
+echo "Rust toolchain ready (${SECONDS}s elapsed)."
+
+pg_bin=/usr/lib/postgresql/15/bin
+pg_data="$HOME/.local/share/annie-mei-auth/postgres"
+if [[ ! -f "$pg_data/PG_VERSION" ]]; then
+  mkdir -p "$pg_data"
+  "$pg_bin/initdb" -D "$pg_data" -U postgres --auth-local=trust --auth-host=trust
+  cat >> "$pg_data/postgresql.conf" <<'EOF'
+
+# Disposable orb database: loopback only, no production data or credentials.
+listen_addresses = '127.0.0.1'
+port = 55432
+unix_socket_directories = ''
+fsync = off
+synchronous_commit = off
+full_page_writes = off
+EOF
+fi
+
+# Persist defaults for agent commands and supervised services, without overriding
+# an explicitly configured database or changing other repositories' environment.
+touch "$HOME/.bash_profile"
+marker='# Annie Mei Auth orb environment'
+if ! grep -Fqx "$marker" "$HOME/.bash_profile"; then
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$marker
+if [[ "\$PWD" == "$repo_root" || "\$PWD" == "$repo_root/"* ]]; then
+  export PATH="\$HOME/.cargo/bin:\$PATH"
+  export DATABASE_URL="\${DATABASE_URL:-postgres://postgres@127.0.0.1:55432/postgres}"
+fi
+EOF
+fi
+echo "Local database and login environment prepared (${SECONDS}s elapsed)."
+
+echo "Fetching locked dependencies and warming the test build..."
+cargo fetch --locked
+cargo test --locked --no-run
+echo "Orb setup finished in ${SECONDS}s."

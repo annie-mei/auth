@@ -1,0 +1,5 @@
+services:
+  postgres:
+    command: exec /usr/lib/postgresql/15/bin/postgres -D "$HOME/.local/share/annie-mei-auth/postgres"
+    port: 55432
+    platforms: [linux]
